@@ -238,6 +238,24 @@ Setiap penambahan filter atau parameter baru (misal: penambahan HTF POI atau Can
    - Jika $\Delta \text{Profit Factor} > 0$ dan $\Delta \text{Max DD} \le 0$, modul **diterima** dan disimpan sebagai varian strategi terverifikasi.
    - Jika penambahan modul justru menurunkan profit factor atau memangkas trade terlalu ekstrem (*over-filtering*), modul **ditolak/dieliminasi**.
 
+### 8.2. Dynamic Ratchet Profit Governor & Monthly Circuit Breaker (Target Bulanan ~20%)
+Untuk mencapai target return bulanan tinggi (~15% - 20%) tanpa mempertaruhkan modal dasar, sistem mengadopsi mekanisme **Multi-Tiered Bottoming Profit Lock**:
+1. **Awal Hari (Normal Risk: 0.5% / $50)**:
+   - Target Take Profit R:R 1:2.5 (+1.25% net profit).
+2. **Kondisi 1: Greed Mode dengan Bottoming Lock**:
+   - Saat Daily PnL $\ge +1.5\%$ $\to$ **Kunci Floor di +1.0%** (Profit $100 PASTI DI TANGAN).
+   - Risiko trade berikutnya dipotong setengahnya menjadi **0.25% ($25 / "House Money")**.
+   - Jika PnL naik ke $\ge +2.0\%$ $\to$ Floor naik ke **+1.5%**.
+   - Jika PnL naik ke $\ge +2.5\%$ $\to$ Floor naik ke **+2.0%**.
+   - **Floor Breach**: Jika pasar berbalik dan profit surut menyentuh Floor $\to$ **DETIK ITU JUGA BOT SHUTDOWN HARI ITU**.
+3. **Kondisi 2: 2-Strike Loss Circuit Breaker**:
+   - 2 loss berturut-turut di hari yang sama (-0.5% + -0.5% = -1.0%) $\to$ **EMERGENCY SHUTDOWN HARI ITU**. Modal 99.0% aman.
+4. **Kondisi 3: Monthly Drawdown Circuit Breaker (-3.0% Cap)**:
+   - Jika akumulasi drawdown dalam 1 bulan tertentu menyentuh **-3.0% (-$300)**:
+   - Bot otomatis **PAUSE TRADING untuk sisa bulan tersebut** agar modal 97.0% terlindungi dan tidak menghapus akumulasi profit bulan-bulan sebelumnya.
+5. **Kondisi 4: Volatility-Adaptive Stop Loss**:
+   - Stop Loss dan Take Profit dikalkulasikan dinamis menggunakan **$1.2 \times \text{ATR}_{14}$ M15**, beradaptasi otomatis terhadap musim volatilitas pasar.
+
 ---
 
 ## 9. Arsitektur Live Execution Bridge (MT5 Wine ke Python Brain)
