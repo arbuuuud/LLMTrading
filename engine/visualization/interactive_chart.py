@@ -23,7 +23,7 @@ from engine.core.event_engine import EventEngine
 from engine.core.types import AccountConfig, OrderDirection, ExitReason
 from engine.execution.commission import CommissionModel
 from engine.execution.slippage import FixedSlippageModel
-from strategies.incubator.xauusd_trend_pullback_scalper import XAUUSDTrendPullbackScalper
+from strategies.incubator.xauusd_daily_sniper import XAUUSDDailySniper
 
 
 def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"):
@@ -36,7 +36,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
         commission_model=CommissionModel(7.0),
         slippage_model=FixedSlippageModel(0.02)
     )
-    strategy = XAUUSDTrendPullbackScalper(risk_reward_ratio=2.0, max_bars_hold=25)
+    strategy = XAUUSDDailySniper(risk_reward_ratio=2.0, base_risk_pct=0.5, greed_risk_pct=0.25)
     res = engine.run_bars(df, strategy)
     perf = res["performance"]
     mc = res["monte_carlo"]
