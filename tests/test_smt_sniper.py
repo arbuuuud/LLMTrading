@@ -1,9 +1,7 @@
 """
-Dual-Engine Scalper Institutional Performance & Day-by-Day Audit.
-Evaluates the unified Dual-Engine strategy:
-- Engine A (Trend Pullback) during Trending Regimes with slope alignment.
-- Engine B (SMT-Confirmed Range Liquidity Sweep) using Silver non-confirmation.
-- Daily Ratchet Risk Governor across 297,946 synchronized M1 bars (10.5 months).
+Institutional 10.5-Month SMT Divergence Performance Audit.
+Simulates XAUUSDSMTSniper using aligned Gold, Silver, and DXY data
+across 297,946 M1 bars.
 """
 
 import sys
@@ -21,11 +19,11 @@ from engine.execution.commission import CommissionModel
 from engine.execution.slippage import FixedSlippageModel
 from engine.metrics.performance import PerformanceCalculator
 from engine.monte_carlo.simulator import MonteCarloSimulator
-from strategies.incubator.xauusd_dual_engine_sniper import XAUUSDDualEngineSniper
+from strategies.incubator.xauusd_smt_sniper import XAUUSDSMTSniper
 
 
 def main():
-    print("Loading Synchronized Gold, Silver, and DXY Parquet datasets...")
+    print("Loading Synchronized 3-Asset Datasets...")
     df_gold = pl.read_parquet("data/processed/bars/XAUUSD/M1/XAUUSD_M1.parquet")
     df_silver = pl.read_parquet("data/processed/bars/XAGUSD/M1/XAGUSD_M1.parquet")
     df_dxy = pl.read_parquet("data/processed/bars/DXY/M1/DXY_M1.parquet")
@@ -67,20 +65,14 @@ def main():
         commission_model=CommissionModel(7.0),
         slippage_model=FixedSlippageModel(0.02)
     )
-    dual_strat = XAUUSDDualEngineSniper(
-        risk_reward_ratio=2.0,
-        sl_buffer_dollars=0.35,
-        max_bars_hold=25,
-        base_risk_pct=0.5,
-        greed_risk_pct=0.25
-    )
+    strategy = XAUUSDSMTSniper(risk_reward_ratio=1.8, sl_buffer_dollars=0.40, max_bars_hold=25)
 
     engine.reset()
-    engine.current_strategy = dual_strat
-    dual_strat.set_engine(engine)
-    dual_strat.on_init()
+    engine.current_strategy = strategy
+    strategy.set_engine(engine)
+    strategy.on_init()
 
-    print("[Dual Engine] Simulating execution with SMT Intermarket confirmation...")
+    print("[SMT Engine] Simulating intermarket execution across 10.5 months...")
     for row in aligned.iter_rows(named=True):
         engine.current_time = row["timestamp"]
         spread = row.get("gold_spread", 0.20)
@@ -90,6 +82,7 @@ def main():
 
         engine._check_daily_circuit_breaker(engine.current_time)
 
+        # Update positions on gold bar
         gold_bar = {
             "timestamp": row["timestamp"],
             "open": row["gold_open"],
@@ -115,7 +108,7 @@ def main():
             "close": row["dxy_close"]
         }
 
-        dual_strat.on_bar_intermarket(gold_bar, silver_bar, dxy_bar)
+        strategy.on_bar_intermarket(gold_bar, silver_bar, dxy_bar)
 
         engine.equity_curve.append({
             "timestamp": engine.current_time,
@@ -126,30 +119,21 @@ def main():
     for pos_id in list(engine.positions.keys()):
         engine._close_position_internal(pos_id, ExitReason.END_OF_DATA)
 
-    dual_strat.on_finish()
+    strategy.on_finish()
 
     perf = PerformanceCalculator.calculate(engine.closed_trades, engine.equity_curve, config.initial_balance)
     mc_sim = MonteCarloSimulator(num_simulations=1000)
     mc = mc_sim.run(engine.closed_trades, config.initial_balance)
 
     daily_trades = defaultdict(list)
-    trend_trades = 0
-    smt_trades = 0
-
     for t in engine.closed_trades:
         day_str = t.open_time.strftime("%Y-%m-%d (%A)")
         daily_trades[day_str].append(t)
-        if t.tag == "Trend_Engine":
-            trend_trades += 1
-        elif t.tag == "SMT_Range_Engine":
-            smt_trades += 1
 
     print("\n" + "=" * 85)
-    print("XAUUSD DUAL-ENGINE (TREND + SMT RANGE FADE): 10.5-MONTH AUDIT")
-    print(f"Trade Breakdown -> Trend Engine: {trend_trades} | SMT Range Engine: {smt_trades}")
+    print("XAUUSD SMT DIVERGENCE (GOLD + SILVER + DXY): 10.5-MONTH AUDIT")
     print("=" * 85)
-
-    days_hit_target = 0
+    days_hit = 0
     profitable_days = 0
     total_days = len(daily_trades)
 
@@ -161,7 +145,7 @@ def main():
 
         if ret_pct >= 1.0:
             status = "🎯 TARGET HIT (>= +1.0%)"
-            days_hit_target += 1
+            days_hit += 1
             profitable_days += 1
         elif ret_pct > 0.0:
             status = "🟢 PROFITABLE DAY"
@@ -175,9 +159,9 @@ def main():
 
     print("-" * 85)
     win_days_pct = (profitable_days / total_days * 100) if total_days > 0 else 0
-    print(f"Total Trading Days Active: {total_days} days")
+    print(f"Total Active Trading Days: {total_days} days")
     print(f"Profitable Days: {profitable_days} of {total_days} ({win_days_pct:.1f}%)")
-    print(f"Days Hitting >= +1.0%: {days_hit_target} of {total_days} ({days_hit_target/max(1, total_days)*100:.1f}%)")
+    print(f"Days Hitting >= +1.0%: {days_hit} of {total_days} ({days_hit/max(1, total_days)*100:.1f}%)")
     print(f"Total Trades: {perf.total_trades} (Averaging {perf.total_trades/max(1, total_days):.1f} trades/day)")
     print(f"Win Rate: {perf.win_rate_pct}% | Profit Factor: {perf.profit_factor:.2f}")
     print(f"Net Profit: ${perf.net_profit:,.2f} | Max DD: {perf.max_drawdown_pct:.2f}% | MC P95 DD: {mc.p95_max_drawdown_pct:.2f}%")
