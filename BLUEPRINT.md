@@ -318,3 +318,31 @@ LLMTrading/
 - [x] **Fase 5**: Post-Mortem Feedback Loop & Knowledge Base Integration (`LifelongLearnerAgent` saving to `knowledge/learnings/`).
 - [x] **Fase 6**: Live Bridge Execution (`LLM_Bridge_Executor.mq5` via native MQL5 TCP Socket ke Python Bridge Server `bridge/server.py`).
 
+---
+
+## 13. Backlog Strategis Lanjutan (Next Strategic Milestones)
+
+Daftar 4 opsi prioritas pengembangan selanjutnya yang siap dilanjutkan:
+
+1. **Opsi 1: Observasi Live Forward-Testing di Akun Demo (Priority 1)**
+   - Menjalankan `bridge/server.py` dalam mode Paper Trading (`python bridge/server.py`) atau Auto-Trade Live Demo (`python bridge/server.py --live`).
+   - Melakukan observasi di sesi aktif (London Open ~14:00 WIB & NY Open ~19:30 WIB).
+   - Memantau streaming tick milidetik, pembentukan bar M1, klasifikasi *Market Regime* real-time, dan respon eksekusi order MT5.
+
+2. **Opsi 2: Integrasi Intermarket SMT Divergence (Gold + Silver + DXY)**
+   - Menambahkan streaming feed untuk `XAGUSD` (Silver) dan `DXY` (Dollar Index) ke dalam bridge.
+   - Mengimplementasikan deteksi **Smart Money Technique (SMT) Divergence**:
+     - *Bearish SMT*: XAUUSD membentuk Higher High, tetapi XAGUSD gagal membentuk Higher High $\to$ konfirmasi sweep/fakeout untuk Sell.
+     - *Bullish SMT*: XAUUSD membentuk Lower Low, tetapi XAGUSD gagal membentuk Lower Low $\to$ konfirmasi akumulasi untuk Buy.
+
+3. **Opsi 3: Big Data Scaling (Batch Ingest 77,3 Juta Ticks ke Parquet)**
+   - Memproses file riil penuh `XAUUSD_202505271036_202604022259.csv` (77.348.506 ticks, 10.5 bulan dari Mei 2025 - April 2026).
+   - Menghasilkan dataset Parquet M1 dan M5 berukuran penuh dengan metrik spread per menit.
+   - Menjalankan *Walk-Forward Analysis (WFA)* dan uji ketahanan musiman (*seasonal regime shifts*).
+
+4. **Opsi 4: Setup Remote Repository Git (GitHub / GitLab) & Merge Request**
+   - Menautkan local git ke remote origin (`git remote add origin <url>`).
+   - Melakukan push seluruh branch fitur (`feat/system-blueprint`, `feat/core-backtest-engine`, `feat/modular-strategy`, `feat/multi-agent`, `feat/live-bridge-execution`).
+   - Menyiapkan Pull Request / Merge Request ke branch `main`.
+
+

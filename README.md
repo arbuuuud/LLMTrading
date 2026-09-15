@@ -89,6 +89,16 @@ Panduan operasional lengkap langkah demi langkah telah didokumentasikan di:
 
 ---
 
+## 🧭 Backlog Pengembangan Selanjutnya (Next Strategic Milestones)
+
+Empat opsi kelanjutan yang telah dicatat dan siap dikerjakan (detail lengkap di [BLUEPRINT.md #13](./BLUEPRINT.md)):
+1. **Opsi 1**: Observasi Live Forward-Testing di Akun Demo (London & NY Sessions).
+2. **Opsi 2**: Integrasi Intermarket SMT Divergence (`XAUUSD` + `XAGUSD` + `DXY`).
+3. **Opsi 3**: Big Data Scaling (Konversi batch penuh 77,3 juta tick ke Parquet M1/M5).
+4. **Opsi 4**: Setup Remote Git (GitHub/GitLab) & Merge Request Review.
+
+---
+
 ## 🔒 Git & Workflow Directive
 
 Setiap kontribusi kode harus mematuhi aturan berikut:
