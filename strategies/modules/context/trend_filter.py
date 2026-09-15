@@ -37,11 +37,16 @@ class TrendBiasFilter:
                 self.current_ema = (close - self.current_ema) * self.multiplier + self.current_ema
 
     def is_bullish_trend(self, current_price: float) -> bool:
-        if self.current_ema is None:
-            return True  # Neutral if not enough data
-        return current_price >= self.current_ema
+        if self.current_ema is None or len(self.m15_closes) < 5:
+            return False
+        # Calculate slope over the last 3 M15 bars
+        slope = self.m15_closes[-1] - self.m15_closes[-4] if len(self.m15_closes) >= 4 else 0.0
+        # True uptrend: price is above EMA AND EMA is sloping upwards
+        return (current_price >= self.current_ema) and (slope > 0.15)
 
     def is_bearish_trend(self, current_price: float) -> bool:
-        if self.current_ema is None:
-            return True
-        return current_price <= self.current_ema
+        if self.current_ema is None or len(self.m15_closes) < 5:
+            return False
+        slope = self.m15_closes[-1] - self.m15_closes[-4] if len(self.m15_closes) >= 4 else 0.0
+        # True downtrend: price is below EMA AND EMA is sloping downwards
+        return (current_price <= self.current_ema) and (slope < -0.15)
