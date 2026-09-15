@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "LLMTrading Core"
 #property link        "https://github.com/alami/LLMTrading"
-#property version     "1.00"
+#property version     "1.01"
 #property description "Lightweight TCP Bridge connecting MetaTrader 5 to Python Multi-Agent Brain"
 
 #include <Trade\Trade.mqh>
@@ -16,7 +16,7 @@
 input group "Bridge Server Settings"
 input string   InpServerHost     = "127.0.0.1";  // Python Brain Host IP
 input int      InpServerPort     = 5555;         // Python Brain Port
-input int      InpTimeoutMs      = 500;          // Socket Timeout (ms)
+input int      InpTimeoutMs      = 3000;         // Socket Timeout (ms)
 input ulong    InpMagicNumber    = 999001;       // Expert Magic Number
 input ulong    InpDeviationPoints= 20;           // Max Slippage Deviation (points)
 
@@ -26,7 +26,7 @@ CPositionInfo  m_position;
 CAccountInfo   m_account;
 int            m_socket          = INVALID_HANDLE;
 bool           m_connected       = false;
-datetime       m_last_connect_try= 0;
+ulong          m_last_connect_ms = 0;
 datetime       m_last_heartbeat  = 0;
 
 //+------------------------------------------------------------------+
@@ -38,10 +38,10 @@ int OnInit()
    m_trade.SetDeviationInPoints(InpDeviationPoints);
    m_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-   PrintFormat("[LLM Bridge] Initialized. Target Python Server: %s:%d (Magic: %d)", InpServerHost, InpServerPort, InpMagicNumber);
+   PrintFormat("[LLM Bridge] Initialized. Target Python Server: %s:%d (Magic: %I64u)", InpServerHost, InpServerPort, InpMagicNumber);
    
    ConnectToServer();
-   EventSetTimer(1); // 1-second timer for heartbeat & auto-reconnect
+   EventSetTimer(1); // 1-second timer
    return(INIT_SUCCEEDED);
 }
 
@@ -72,9 +72,12 @@ bool ConnectToServer()
       return false;
    }
 
+   PrintFormat("[LLM Bridge] Attempting connection to Python Server %s:%d...", InpServerHost, InpServerPort);
+
    if(!SocketConnect(m_socket, InpServerHost, InpServerPort, InpTimeoutMs))
    {
-      // Non-blocking connect attempt
+      int err = GetLastError();
+      PrintFormat("[LLM Bridge] SocketConnect failed to %s:%d. Error: %d", InpServerHost, InpServerPort, err);
       SocketClose(m_socket);
       m_socket = INVALID_HANDLE;
       m_connected = false;
@@ -82,7 +85,7 @@ bool ConnectToServer()
    }
 
    m_connected = true;
-   PrintFormat("[LLM Bridge] Successfully connected to Python Brain at %s:%d!", InpServerHost, InpServerPort);
+   PrintFormat("[LLM Bridge] CONNECTED SUCCESSFULLY to Python Brain at %s:%d!", InpServerHost, InpServerPort);
    return true;
 }
 
@@ -287,12 +290,12 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-   datetime now = TimeCurrent();
+   ulong now_ms = GetTickCount64();
    if(!m_connected)
    {
-      if(now - m_last_connect_try >= 3)
+      if(now_ms - m_last_connect_ms >= 3000)
       {
-         m_last_connect_try = now;
+         m_last_connect_ms = now_ms;
          ConnectToServer();
       }
    }

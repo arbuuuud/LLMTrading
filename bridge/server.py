@@ -7,6 +7,7 @@ and sends execution orders with strict institutional risk controls.
 
 import sys
 from pathlib import Path
+import argparse
 
 # Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -80,12 +81,52 @@ class LiveBarAggregator:
         return completed_bar
 
 
+class LiveBridgeEngineAdapter:
+    """
+    Adapter bridging BaseStrategy orders to the LiveBridgeServer and RiskGatekeeper.
+    """
+    def __init__(self, bridge_server: "LiveBridgeServer"):
+        self.bridge = bridge_server
+        self.positions = {}
+
+    def buy(self, symbol: str, volume_lots: float, stop_loss: Optional[float] = None,
+            take_profit: Optional[float] = None, comment: str = "", tag: str = "") -> Optional[str]:
+        asyncio.create_task(
+            self.bridge.execute_strategy_order(
+                symbol=symbol,
+                direction=OrderDirection.BUY,
+                lots=volume_lots,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                comment=comment or tag or "LLM_Buy"
+            )
+        )
+        return "PENDING"
+
+    def sell(self, symbol: str, volume_lots: float, stop_loss: Optional[float] = None,
+             take_profit: Optional[float] = None, comment: str = "", tag: str = "") -> Optional[str]:
+        asyncio.create_task(
+            self.bridge.execute_strategy_order(
+                symbol=symbol,
+                direction=OrderDirection.SELL,
+                lots=volume_lots,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                comment=comment or tag or "LLM_Sell"
+            )
+        )
+        return "PENDING"
+
+    def close_position(self, position_id: str, reason: Any = None):
+        asyncio.create_task(self.bridge.send_close_all())
+
+
 class LiveBridgeServer:
     def __init__(
         self,
         host: str = "127.0.0.1",
         port: int = 5555,
-        dry_run: bool = True  # Default to Paper Trading mode for safety
+        dry_run: bool = True  # True = Paper Trading (Dry Run), False = Real MT5 Demo/Live Order
     ):
         self.host = host
         self.port = port
@@ -93,6 +134,10 @@ class LiveBridgeServer:
 
         self.orchestrator = MultiAgentOrchestrator()
         self.strategy = XAUUSDTrendPullbackScalper(risk_reward_ratio=2.0, max_bars_hold=25)
+        self.engine_adapter = LiveBridgeEngineAdapter(self)
+        self.strategy.set_engine(self.engine_adapter)
+        self.strategy.on_init()
+
         self.aggregator = LiveBarAggregator()
 
         self.client_writer: Optional[asyncio.StreamWriter] = None
@@ -102,8 +147,11 @@ class LiveBridgeServer:
 
     async def start(self):
         self.running = True
-        mode_str = "PAPER TRADING (DRY RUN)" if self.dry_run else "LIVE BROKER EXECUTION"
-        logger.info(f"Starting MT5 Bridge Server on {self.host}:{self.port} [{mode_str}]...")
+        mode_str = "PAPER TRADING (SIMULATION)" if self.dry_run else "LIVE MT5 DEMO EXECUTION (AUTO-TRADE ON)"
+        logger.info("=" * 70)
+        logger.info(f" Starting MT5 Bridge Server on {self.host}:{self.port}")
+        logger.info(f" Execution Mode: {mode_str}")
+        logger.info("=" * 70)
 
         self.server = await asyncio.start_server(self._handle_client, self.host, self.port)
         logger.info(f"Bridge Server listening on {self.host}:{self.port}. Waiting for MT5 EA connection...")
@@ -167,8 +215,6 @@ class LiveBridgeServer:
                 f"Lots: {msg.get('lots')} | Success: {msg.get('success')} | "
                 f"Ticket: {msg.get('ticket')} | Price: {msg.get('price')}"
             )
-        else:
-            logger.debug(f"[Bridge] Received unhandled message type: {msg_type}")
 
     async def _handle_tick(self, tick: Dict[str, Any]):
         self.latest_tick = tick
@@ -179,6 +225,12 @@ class LiveBridgeServer:
         time_ms = tick["time"]
         equity = tick.get("equity", 10000.0)
         open_pos = tick.get("open_positions", 0)
+
+        # Update engine adapter open positions
+        if open_pos == 0:
+            self.engine_adapter.positions.clear()
+        else:
+            self.engine_adapter.positions["ACTIVE"] = True
 
         # Feed to aggregator to form M1 bar
         bar = self.aggregator.process_tick(symbol, bid, ask, spread, time_ms)
@@ -202,14 +254,57 @@ class LiveBridgeServer:
         # 2. Risk Gatekeeper bar sync
         self.orchestrator.risk_gatekeeper.on_new_bar(bar["timestamp"], account_equity)
 
-        # If regime is not favorable, stand aside
-        if regime_report.recommended_strategy_family == "STAND_ASIDE":
+        # 3. Strategy Bar Evaluation
+        self.strategy.on_bar(bar)
+
+    async def execute_strategy_order(
+        self,
+        symbol: str,
+        direction: OrderDirection,
+        lots: float,
+        stop_loss: Optional[float],
+        take_profit: Optional[float],
+        comment: str
+    ):
+        if not self.latest_tick or not stop_loss or not take_profit:
             return
 
-        # 3. Strategy Signal Generation
-        # (In live execution, strategy inspects bar and requests order via callback)
-        # For demonstration of live bridge, we simulate order dispatch
-        # when strategy conditions are met.
+        entry_price = self.latest_tick["ask"] if direction == OrderDirection.BUY else self.latest_tick["bid"]
+        current_spread = self.latest_tick["spread"]
+        account_equity = self.latest_tick.get("equity", 10000.0)
+        open_pos = self.latest_tick.get("open_positions", 0)
+
+        # Submit order to Institutional Risk Gatekeeper for dynamic sizing and veto
+        approval: TradeApproval = self.orchestrator.evaluate_trade_risk(
+            symbol=symbol,
+            direction=direction,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            current_spread=current_spread,
+            account_equity=account_equity,
+            num_open_positions=open_pos
+        )
+
+        if not approval.approved:
+            logger.warning(f"[RISK VETO] Order rejected by Gatekeeper: {approval.reason}")
+            return
+
+        side_str = "BUY" if direction == OrderDirection.BUY else "SELL"
+        final_lots = approval.recommended_lots
+
+        logger.info(
+            f"[TRADE APPROVED] {side_str} {symbol} {final_lots} lots | "
+            f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${approval.risk_dollars}"
+        )
+
+        await self.send_order(
+            symbol=symbol,
+            side=side_str,
+            lots=final_lots,
+            sl=stop_loss,
+            tp=take_profit,
+            comment=comment
+        )
 
     async def send_order(
         self,
@@ -241,12 +336,30 @@ class LiveBridgeServer:
         payload = json.dumps(cmd) + "\n"
         self.client_writer.write(payload.encode("utf-8"))
         await self.client_writer.drain()
-        logger.info(f"[DISPATCH TO MT5] Sent order command: {payload.strip()}")
+        logger.info(f"[DISPATCH TO MT5] Sent live order command: {payload.strip()}")
         return True
+
+    async def send_close_all(self, symbol: str = ""):
+        cmd = {"action": "CLOSE_ALL", "symbol": symbol}
+        if self.dry_run:
+            logger.info(f"[PAPER TRADE DRY-RUN] Close All Positions: {cmd}")
+            return
+
+        if self.client_writer:
+            payload = json.dumps(cmd) + "\n"
+            self.client_writer.write(payload.encode("utf-8"))
+            await self.client_writer.drain()
+            logger.info(f"[DISPATCH TO MT5] Sent CLOSE_ALL command.")
 
 
 if __name__ == "__main__":
-    server = LiveBridgeServer(host="127.0.0.1", port=5555, dry_run=True)
+    parser = argparse.ArgumentParser(description="LLMTrading MT5 Bridge Server")
+    parser.add_argument("--live", action="store_true", help="Enable live broker execution (default: Paper trading dry-run)")
+    parser.add_argument("--port", type=int, default=5555, help="Port to listen on (default: 5555)")
+    args = parser.parse_args()
+
+    is_dry_run = not args.live
+    server = LiveBridgeServer(host="127.0.0.1", port=args.port, dry_run=is_dry_run)
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:
