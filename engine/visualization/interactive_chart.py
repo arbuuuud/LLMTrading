@@ -2,22 +2,21 @@
 Ultra-Responsive Institutional Visualizer & Dashboard (Native HTML5 Canvas).
 Features:
 - Butter-smooth 60fps performance (lightweight, memory-safe, instant load).
-- Month & Session Period Switcher (e.g. All 10.5 Months, or focus on specific months like June, Oct, Nov).
-- Candlestick Chart with:
-  * Full 2D Pan (drag chart in any direction: up, down, left, right).
-  * TradingView-Style Price Scale Drag Zoom (drag right-hand price axis up/down to zoom vertically).
-  * Diagonal dashed trade trajectories (Green ↗ for WIN, Red ↘ for LOSS) from entry price to exit price.
-  * Exact entry dots (Blue) and exit dots (Green/Red) at true price coordinates.
-  * Key Session levels: Asia High & Asia Low lines when inspecting trades.
-- Interactive Account Equity Curve ($10,000 Starting Balance) synchronized with trades.
-- Complete Trade Ledger with instant search, filter chips (All, BUY, SELL, Wins, Losses),
-  and one-click zoom to any trade.
-- 100% Native HTML5 Canvas & SVG (Zero external dependencies, zero CDN blocking).
+- Candlestick Chart with 2D pan and vertical price scale zoom.
+- Interactive Account Equity Curve ($10,000 Starting Balance).
+- 2 New Dedicated PnL Analytics Graphs:
+  * Daily PnL Bar Chart (% Return vs H-1 Prior Day Equity).
+  * Monthly PnL Bar Chart (% Return vs Month-1 Prior Month Equity).
+  * Interactive tooltips displaying exact $ PnL, % vs previous equity, starting & ending equity.
+  * Click any bar to jump the candlestick chart directly to that day/month!
+- Complete Executed Trades Ledger with search, filter chips, and one-click jump.
+- 100% Native HTML5 Canvas (Zero external dependencies, zero CDN blocking).
 """
 
 import sys
 from pathlib import Path
 import json
+from collections import defaultdict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -38,7 +37,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
     total_bars_count = len(df_all)
     print(f"[Visualizer] Total available bars: {total_bars_count:,}.")
 
-    # Run the Winning Strategy: Session Anchored VWAP 1.8 Sigma Mean Reversion
+    # Run the Proven Winning Strategy: Session Anchored VWAP 1.8 Sigma Golden Window
     engine = EventEngine(
         config=AccountConfig(initial_balance=10000.0, commission_per_lot_round_turn=7.0),
         commission_model=CommissionModel(7.0),
@@ -46,7 +45,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
     )
     strategy = SessionAnchoredVWAPStrategy(
         band_multiplier=1.8,
-        sl_buffer_dollars=0.40,
+        sl_buffer_dollars=0.50,
         risk_reward_ratio=2.0,
         base_risk_pct=0.5,
         greed_risk_pct=0.25,
@@ -64,7 +63,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
     sells_count = sum(1 for t in trades if t.direction == OrderDirection.SELL)
     print(f"[Visualizer] Simulation complete: {len(trades)} trades ({buys_count} BUY / {sells_count} SELL).")
 
-    # Load 100% continuous, seamless M5 bars (zero skipped minutes, zero gaps between open and prev close)
+    # Load 100% continuous, seamless M5 bars
     m5_path = "data/processed/bars/XAUUSD/M5/XAUUSD_M5.parquet"
     print(f"[Visualizer] Loading seamless continuous M5 bars from {m5_path}...")
     df_display = pl.read_parquet(m5_path)
@@ -119,6 +118,67 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
             "ts": int(equity_curve[-1]["timestamp"].timestamp()),
             "eq": round(equity_curve[-1]["equity"], 2)
         })
+
+    # Calculate Daily PnL and % return vs H-1 prior day equity
+    daily_groups = defaultdict(list)
+    for t in trades:
+        d_str = t.open_time.strftime("%Y-%m-%d")
+        daily_groups[d_str].append(t)
+
+    sorted_days = sorted(daily_groups.keys())
+    daily_pnl_data = []
+    running_eq = 10000.0
+    for d_str in sorted_days:
+        t_list = daily_groups[d_str]
+        day_pnl = sum(t.net_pnl for t in t_list)
+        pct_vs_prev = (day_pnl / running_eq) * 100.0 if running_eq > 0 else 0.0
+        end_eq = running_eq + day_pnl
+        wins = sum(1 for t in t_list if t.net_pnl > 0)
+        daily_pnl_data.append({
+            "date": d_str,
+            "pnl": round(day_pnl, 2),
+            "prev_eq": round(running_eq, 2),
+            "end_eq": round(end_eq, 2),
+            "pct_vs_prev": round(pct_vs_prev, 2),
+            "trades": len(t_list),
+            "wins": wins,
+            "losses": len(t_list) - wins,
+            "first_ts": int(t_list[0].open_time.timestamp())
+        })
+        running_eq = end_eq
+
+    # Calculate Monthly PnL and % return vs Month-1 prior month equity
+    monthly_groups = defaultdict(list)
+    for t in trades:
+        m_str = t.open_time.strftime("%Y-%m")
+        monthly_groups[m_str].append(t)
+
+    sorted_months = sorted(monthly_groups.keys())
+    monthly_pnl_data = []
+    running_month_eq = 10000.0
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    for m_str in sorted_months:
+        t_list = monthly_groups[m_str]
+        m_pnl = sum(t.net_pnl for t in t_list)
+        pct_vs_prev_m = (m_pnl / running_month_eq) * 100.0 if running_month_eq > 0 else 0.0
+        end_m_eq = running_month_eq + m_pnl
+        wins = sum(1 for t in t_list if t.net_pnl > 0)
+        yr, mo = m_str.split("-")
+        label = f"{month_names[int(mo)-1]} '{yr[2:]}"
+        monthly_pnl_data.append({
+            "month": m_str,
+            "label": label,
+            "pnl": round(m_pnl, 2),
+            "prev_eq": round(running_month_eq, 2),
+            "end_eq": round(end_m_eq, 2),
+            "pct_vs_prev": round(pct_vs_prev_m, 2),
+            "trades": len(t_list),
+            "wins": wins,
+            "losses": len(t_list) - wins,
+            "win_rate": round((wins / len(t_list)) * 100.0, 1),
+            "first_ts": int(t_list[0].open_time.timestamp())
+        })
+        running_month_eq = end_m_eq
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -345,7 +405,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
                 🖱️ Chart: Drag in any direction (2D pan) • Right Axis: Drag Up/Down to zoom vertically
             </span>
         </div>
-        <canvas id="candle-canvas" height="490"></canvas>
+        <canvas id="candle-canvas" height="470"></canvas>
         <div id="tooltip"></div>
     </div>
 
@@ -357,10 +417,31 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
                 {'+' if perf.net_profit >= 0 else ''}${perf.net_profit:,.2f}
             </span>
         </div>
-        <canvas id="equity-canvas" height="150"></canvas>
+        <canvas id="equity-canvas" height="140"></canvas>
     </div>
 
-    <!-- 3. Executed Trades Table -->
+    <!-- 3. Daily & Monthly PnL Analytics (2 Interactive Graphs with % vs H-1 / Month-1) -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 14px; margin: 10px 24px 0 24px;">
+        <!-- Daily PnL Chart Box -->
+        <div class="chart-box" style="margin: 0;">
+            <div class="chart-header">
+                <span>📅 Daily PnL (% Return vs H-1 Equity)</span>
+                <span id="daily-stat-badge" style="font-size:0.75rem; color:#58a6ff;">Hover any bar for H-1 return & PnL</span>
+            </div>
+            <canvas id="daily-canvas" height="180"></canvas>
+        </div>
+
+        <!-- Monthly PnL Chart Box -->
+        <div class="chart-box" style="margin: 0;">
+            <div class="chart-header">
+                <span>📆 Monthly PnL (% Return vs Month-1 Equity)</span>
+                <span id="monthly-stat-badge" style="font-size:0.75rem; color:#58a6ff;">Hover any bar for M-1 return & PnL</span>
+            </div>
+            <canvas id="monthly-canvas" height="180"></canvas>
+        </div>
+    </div>
+
+    <!-- 4. Executed Trades Table -->
     <div class="table-box">
         <div class="table-header">
             <span>Executed Trades Ledger ({len(trade_list)} Trades)</span>
@@ -393,6 +474,8 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
         const candles = {json.dumps(candles)};
         const trades = {json.dumps(trade_list)};
         const eqData = {json.dumps(eq_pts)};
+        const dailyData = {json.dumps(daily_pnl_data)};
+        const monthlyData = {json.dumps(monthly_pnl_data)};
         
         // Binary search for exact bar index
         function findBarIndex(targetTs) {{
@@ -417,6 +500,14 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
         // Canvas 2: Equity
         const eqCanvas = document.getElementById('equity-canvas');
         const eqCtx = eqCanvas.getContext('2d');
+
+        // Canvas 3: Daily PnL
+        const dailyCanvas = document.getElementById('daily-canvas');
+        const dailyCtx = dailyCanvas.getContext('2d');
+
+        // Canvas 4: Monthly PnL
+        const monthlyCanvas = document.getElementById('monthly-canvas');
+        const monthlyCtx = monthlyCanvas.getContext('2d');
         
         let startIdx = 0;
         let viewCount = 140;
@@ -429,6 +520,10 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
         let lastVisiblePriceSpan = 10.0;
 
         let tradeHitboxes = [];
+        let dailyHitboxes = [];
+        let monthlyHitboxes = [];
+        let hoveredDailyIdx = -1;
+        let hoveredMonthlyIdx = -1;
 
         const padLeft = 10;
         const padRight = 85;
@@ -438,8 +533,12 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
         function resizeCanvases() {{
             canvas.width = canvas.parentElement.clientWidth;
             eqCanvas.width = eqCanvas.parentElement.clientWidth;
+            dailyCanvas.width = dailyCanvas.parentElement.clientWidth;
+            monthlyCanvas.width = monthlyCanvas.parentElement.clientWidth;
             drawChart();
             drawEquityChart();
+            drawDailyPnLChart();
+            drawMonthlyPnLChart();
         }}
         window.addEventListener('resize', resizeCanvases);
 
@@ -464,147 +563,126 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
             const visibleStartTs = slice[0].ts;
             const visibleEndTs = slice[slice.length - 1].ts;
 
-            trades.forEach(tr => {{
-                const inView = !(tr.close_ts < visibleStartTs || tr.open_ts > visibleEndTs);
-                if (inView) {{
-                    minP = Math.min(minP, tr.entry, tr.exit);
-                    maxP = Math.max(maxP, tr.entry, tr.exit);
-                    if (tr.sl) minP = Math.min(minP, tr.sl);
-                    if (tr.tp) maxP = Math.max(maxP, tr.tp);
-                }}
+            const visibleTrades = trades.filter(t => {{
+                if (displayFilter === 'buys' && t.side !== 'BUY') return false;
+                if (displayFilter === 'sells' && t.side !== 'SELL') return false;
+                if (displayFilter === 'wins' && !t.win) return false;
+                if (displayFilter === 'losses' && t.win) return false;
+                return (t.close_ts >= visibleStartTs && t.open_ts <= visibleEndTs);
             }});
 
-            const centerP = (minP + maxP) / 2.0 + priceCenterOffset;
-            const halfRange = ((maxP - minP) / 2.0) * (1.1 / priceScaleMultiplier) || 2.0;
+            for (let t of visibleTrades) {{
+                minP = Math.min(minP, t.entry, t.exit);
+                maxP = Math.max(maxP, t.entry, t.exit);
+                if (t.sl) minP = Math.min(minP, t.sl);
+                if (t.tp) maxP = Math.max(maxP, t.tp);
+            }}
 
-            const effectiveMinP = centerP - halfRange;
-            const effectiveMaxP = centerP + halfRange;
-            lastVisiblePriceSpan = (effectiveMaxP - effectiveMinP);
+            const rawSpan = Math.max(0.2, maxP - minP);
+            const rawCenter = (minP + maxP) / 2.0;
+
+            const effectiveSpan = rawSpan / priceScaleMultiplier;
+            lastVisiblePriceSpan = effectiveSpan;
+
+            const effectiveCenter = rawCenter + priceCenterOffset;
+            const effectiveMinP = effectiveCenter - (effectiveSpan / 2.0);
+            const effectiveMaxP = effectiveCenter + (effectiveSpan / 2.0);
 
             const chartW = W - padLeft - padRight;
             const chartH = H - padTop - padBottom;
+            const candleW = Math.max(1, chartW / slice.length);
 
             function getY(p) {{
-                return padTop + (1.0 - (p - effectiveMinP) / (effectiveMaxP - effectiveMinP)) * chartH;
+                return padTop + chartH - ((p - effectiveMinP) / effectiveSpan) * chartH;
             }}
 
-            const barW = Math.max(1.5, (chartW / slice.length) * 0.7);
-            const stepW = chartW / slice.length;
+            function getX(idxInSlice) {{
+                return padLeft + idxInSlice * candleW + candleW / 2;
+            }}
 
-            // Grid Lines
+            // Draw Background Grid
             ctx.strokeStyle = '#21262d';
             ctx.lineWidth = 1;
             ctx.fillStyle = '#8b949e';
             ctx.font = '11px -apple-system, sans-serif';
+            ctx.textAlign = 'left';
 
-            const priceStep = (effectiveMaxP - effectiveMinP) / 6;
-            for (let i = 0; i <= 6; i++) {{
-                const p = effectiveMinP + i * priceStep;
+            const priceStep = Math.pow(10, Math.floor(Math.log10(effectiveSpan))) * 0.5 || 1.0;
+            const firstGridP = Math.ceil(effectiveMinP / priceStep) * priceStep;
+            for (let p = firstGridP; p <= effectiveMaxP; p += priceStep) {{
                 const y = getY(p);
-                ctx.beginPath();
-                ctx.moveTo(padLeft, y);
-                ctx.lineTo(W - padRight, y);
-                ctx.stroke();
+                if (y >= padTop && y <= H - padBottom) {{
+                    ctx.beginPath();
+                    ctx.moveTo(padLeft, y);
+                    ctx.lineTo(W - padRight, y);
+                    ctx.stroke();
+                    ctx.fillText('$' + p.toFixed(2), W - padRight + 10, y + 4);
+                }}
             }}
 
-            // Candlesticks
-            slice.forEach((c, i) => {{
-                const x = padLeft + (i + 0.5) * stepW;
-                const yO = getY(c.o);
-                const yC = getY(c.c);
-                const yH = getY(c.h);
-                const yL = getY(c.l);
+            // Draw Candles
+            for (let i = 0; i < slice.length; i++) {{
+                const c = slice[i];
+                const x = getX(i);
+                const isGreen = c.c >= c.o;
+                const bodyTop = getY(Math.max(c.o, c.c));
+                const bodyBottom = getY(Math.min(c.o, c.c));
+                const bodyH = Math.max(1, bodyBottom - bodyTop);
 
-                const isGreen = (c.c >= c.o);
-                const col = isGreen ? '#3fb950' : '#f85149';
-
-                // Wick
-                ctx.strokeStyle = col;
+                ctx.strokeStyle = isGreen ? '#3fb950' : '#f85149';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.moveTo(x, yH);
-                ctx.lineTo(x, yL);
+                ctx.moveTo(x, getY(c.h));
+                ctx.lineTo(x, getY(c.l));
                 ctx.stroke();
 
-                // Body
-                ctx.fillStyle = col;
-                const top = Math.min(yO, yC);
-                const bodyH = Math.max(2, Math.abs(yC - yO));
-                ctx.fillRect(x - barW / 2, top, barW, bodyH);
+                ctx.fillStyle = isGreen ? '#238636' : '#da3633';
+                const bw = Math.max(1, candleW - 2);
+                ctx.fillRect(x - bw / 2, bodyTop, bw, bodyH);
+            }}
 
-                // Timestamp label
-                const labelFreq = Math.max(12, Math.floor(viewCount / 6));
-                if (i % labelFreq === 0) {{
-                    ctx.fillStyle = '#6e7681';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(c.t, x, H - 8);
-                }}
-            }});
+            // Draw Trade Trajectories
+            for (let t of visibleTrades) {{
+                const openIdxAll = findBarIndex(t.open_ts);
+                const closeIdxAll = findBarIndex(t.close_ts);
 
-            // Trades Trajectories
-            trades.forEach(tr => {{
-                if (displayFilter === 'buys' && tr.side !== 'BUY') return;
-                if (displayFilter === 'sells' && tr.side !== 'SELL') return;
-                if (displayFilter === 'wins' && !tr.win) return;
-                if (displayFilter === 'losses' && tr.win) return;
+                const openRelIdx = openIdxAll - startIdx;
+                const closeRelIdx = closeIdxAll - startIdx;
 
-                if (tr.close_ts < visibleStartTs || tr.open_ts > visibleEndTs) return;
+                const x1 = getX(openRelIdx);
+                const y1 = getY(t.entry);
+                const x2 = getX(closeRelIdx);
+                const y2 = getY(t.exit);
 
-                // Find exact bar index using binary search
-                let openIdx = findBarIndex(tr.open_ts);
-                let closeIdx = findBarIndex(tr.close_ts);
+                const isFocused = (t.id === focusedTradeId);
+                const trajColor = t.win ? '#3fb950' : '#f85149';
 
-                if (openIdx === undefined) return;
-
-                const x1 = padLeft + (openIdx - startIdx + 0.5) * stepW;
-                const x2 = closeIdx !== undefined ? (padLeft + (closeIdx - startIdx + 0.5) * stepW) : (W - padRight);
-
-                const y1 = getY(tr.entry);
-                const y2 = getY(tr.exit);
-
-                const isFocused = (tr.id === focusedTradeId);
-                const lineColor = tr.win ? '#3fb950' : '#f85149';
-
-                tradeHitboxes.push({{
-                    trade: tr,
-                    x1, y1, x2, y2
-                }});
-
-                // Diagonal Trajectory Line
-                ctx.strokeStyle = lineColor;
-                ctx.setLineDash(isFocused ? [6, 4] : [4, 4]);
-                ctx.lineWidth = isFocused ? 3.5 : 2;
+                ctx.save();
+                ctx.strokeStyle = trajColor;
+                ctx.lineWidth = isFocused ? 3 : 2;
+                ctx.setLineDash([5, 4]);
                 ctx.beginPath();
                 ctx.moveTo(x1, y1);
                 ctx.lineTo(x2, y2);
                 ctx.stroke();
-                ctx.setLineDash([]);
+                ctx.restore();
 
-                // Entry Dot
+                // Entry dot
                 ctx.fillStyle = '#58a6ff';
                 ctx.beginPath();
-                ctx.arc(x1, y1, isFocused ? 5.5 : 3.5, 0, Math.PI * 2);
+                ctx.arc(x1, y1, isFocused ? 6 : 4, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Exit Dot
-                ctx.fillStyle = lineColor;
+                // Exit dot
+                ctx.fillStyle = trajColor;
                 ctx.beginPath();
-                ctx.arc(x2, y2, isFocused ? 6.5 : 4, 0, Math.PI * 2);
+                ctx.arc(x2, y2, isFocused ? 6 : 4, 0, Math.PI * 2);
                 ctx.fill();
 
-                if (isFocused || viewCount <= 90) {{
-                    ctx.font = isFocused ? 'bold 11px -apple-system, sans-serif' : '10px -apple-system, sans-serif';
-                    ctx.fillStyle = '#58a6ff';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(`#${{tr.id}} ${{tr.side}} (${{tr.lots}}L)`, x1, y1 - 8);
+                tradeHitboxes.push({{ trade: t, x1, y1, x2, y2 }});
+            }}
 
-                    ctx.fillStyle = lineColor;
-                    const pnlText = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(0);
-                    ctx.fillText(pnlText, x2, y2 + (tr.win ? -8 : 14));
-                }}
-            }});
-
-            // Right Price Scale Bar
+            // Right Price Scale Area Divider
             ctx.fillStyle = '#161b22';
             ctx.fillRect(W - padRight, 0, padRight, H);
             ctx.strokeStyle = '#30363d';
@@ -612,45 +690,27 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
             ctx.moveTo(W - padRight, 0);
             ctx.lineTo(W - padRight, H);
             ctx.stroke();
-
-            ctx.textAlign = 'left';
-            ctx.fillStyle = '#8b949e';
-            for (let i = 0; i <= 6; i++) {{
-                const p = effectiveMinP + i * priceStep;
-                const y = getY(p);
-                ctx.fillText('$' + p.toFixed(2), W - padRight + 10, y + 4);
-            }}
-
-            ctx.fillStyle = '#30363d';
-            ctx.fillRect(W - 14, H / 2 - 20, 6, 40);
-            ctx.fillStyle = '#58a6ff';
-            ctx.font = '10px sans-serif';
-            ctx.fillText('↕', W - 14, H / 2 + 4);
         }}
 
-        // --- DRAW EQUITY CURVE CHART ---
+        // --- DRAW EQUITY CHART ---
         function drawEquityChart() {{
             const W = eqCanvas.width;
             const H = eqCanvas.height;
             eqCtx.clearRect(0, 0, W, H);
-            if (eqData.length < 2) return;
+            if (eqData.length === 0) return;
 
             let minEq = Infinity;
             let maxEq = -Infinity;
-            eqData.forEach(d => {{
+            for (let d of eqData) {{
                 if (d.eq < minEq) minEq = d.eq;
                 if (d.eq > maxEq) maxEq = d.eq;
-            }});
-
-            const padEq = (maxEq - minEq) * 0.15 || 50;
-            minEq = Math.floor(minEq - padEq);
-            maxEq = Math.ceil(maxEq + padEq);
-
-            const eqChartW = W - padLeft - padRight;
-            const eqChartH = H - 20 - 20;
+            }}
+            minEq = Math.min(minEq, 10000.0);
+            maxEq = Math.max(maxEq, 10000.0);
+            const spanEq = Math.max(100.0, maxEq - minEq);
 
             function getEqY(val) {{
-                return 20 + (1.0 - (val - minEq) / (maxEq - minEq)) * eqChartH;
+                return padTop + (H - padTop - padBottom) - ((val - minEq) / spanEq) * (H - padTop - padBottom);
             }}
 
             eqCtx.strokeStyle = '#21262d';
@@ -659,10 +719,8 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
             eqCtx.font = '11px -apple-system, sans-serif';
             eqCtx.textAlign = 'left';
 
-            const eqSteps = 4;
-            const eqStepVal = (maxEq - minEq) / eqSteps;
-            for (let i = 0; i <= eqSteps; i++) {{
-                const val = minEq + i * eqStepVal;
+            const eqSteps = [minEq, 10000.0, maxEq];
+            for (let val of eqSteps) {{
                 const y = getEqY(val);
                 eqCtx.beginPath();
                 eqCtx.moveTo(padLeft, y);
@@ -671,7 +729,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
                 eqCtx.fillText('$' + val.toLocaleString('en-US', {{ minimumFractionDigits: 0 }}), W - padRight + 10, y + 4);
             }}
 
-            // Baseline at $10,000
+            // $10,000 Baseline
             const y10k = getEqY(10000.0);
             eqCtx.strokeStyle = '#30363d';
             eqCtx.setLineDash([4, 4]);
@@ -681,36 +739,32 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
             eqCtx.stroke();
             eqCtx.setLineDash([]);
 
-            // Draw Equity Area & Curve
-            const stepX = eqChartW / (eqData.length - 1);
-            
-            // Area Fill
+            // Draw Equity Area & Line
+            const stepX = (W - padLeft - padRight) / Math.max(1, eqData.length - 1);
             eqCtx.beginPath();
-            eqData.forEach((d, i) => {{
+            for (let i = 0; i < eqData.length; i++) {{
                 const x = padLeft + i * stepX;
-                const y = getEqY(d.eq);
+                const y = getEqY(eqData[i].eq);
                 if (i === 0) eqCtx.moveTo(x, y);
                 else eqCtx.lineTo(x, y);
-            }});
+            }}
             eqCtx.lineTo(padLeft + (eqData.length - 1) * stepX, H - 20);
             eqCtx.lineTo(padLeft, H - 20);
             eqCtx.closePath();
             eqCtx.fillStyle = 'rgba(88, 166, 255, 0.12)';
             eqCtx.fill();
 
-            // Line
             eqCtx.beginPath();
-            eqData.forEach((d, i) => {{
+            for (let i = 0; i < eqData.length; i++) {{
                 const x = padLeft + i * stepX;
-                const y = getEqY(d.eq);
+                const y = getEqY(eqData[i].eq);
                 if (i === 0) eqCtx.moveTo(x, y);
                 else eqCtx.lineTo(x, y);
-            }});
+            }}
             eqCtx.strokeStyle = '#58a6ff';
             eqCtx.lineWidth = 2;
             eqCtx.stroke();
 
-            // Current final equity dot
             const lastX = padLeft + (eqData.length - 1) * stepX;
             const lastY = getEqY(eqData[eqData.length - 1].eq);
             eqCtx.fillStyle = '#58a6ff';
@@ -731,7 +785,332 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
             eqCtx.fillText('$' + eqData[eqData.length - 1].eq.toFixed(2), W - padRight + 10, lastY + 4);
         }}
 
-        // --- MOUSE INTERACTIONS (PAN & SCALE) ---
+        // --- DRAW DAILY PNL CHART (% vs H-1 Equity) ---
+        function drawDailyPnLChart() {{
+            const W = dailyCanvas.width;
+            const H = dailyCanvas.height;
+            dailyCtx.clearRect(0, 0, W, H);
+            dailyHitboxes = [];
+            if (dailyData.length === 0) return;
+
+            let maxAbsPct = 0.5;
+            for (let d of dailyData) {{
+                const a = Math.abs(d.pct_vs_prev);
+                if (a > maxAbsPct) maxAbsPct = a;
+            }}
+            maxAbsPct = Math.max(1.5, maxAbsPct * 1.15); // Add headroom
+
+            const chartW = W - padLeft - padRight;
+            const chartH = H - 40;
+            const zeroY = 20 + chartH / 2.0;
+
+            function getYPct(pct) {{
+                return zeroY - (pct / maxAbsPct) * (chartH / 2.0);
+            }}
+
+            // Gridlines for %
+            dailyCtx.strokeStyle = '#21262d';
+            dailyCtx.lineWidth = 1;
+            dailyCtx.fillStyle = '#8b949e';
+            dailyCtx.font = '10px -apple-system, sans-serif';
+            dailyCtx.textAlign = 'left';
+
+            const pctSteps = [-2.0, -1.0, 1.0, 2.0, 3.0].filter(p => Math.abs(p) <= maxAbsPct);
+            for (let p of pctSteps) {{
+                const y = getYPct(p);
+                dailyCtx.beginPath();
+                dailyCtx.moveTo(padLeft, y);
+                dailyCtx.lineTo(W - padRight, y);
+                dailyCtx.stroke();
+                dailyCtx.fillText((p > 0 ? '+' : '') + p.toFixed(1) + '%', W - padRight + 10, y + 3);
+            }}
+
+            // Zero Line (0.0%)
+            dailyCtx.strokeStyle = '#30363d';
+            dailyCtx.lineWidth = 1.5;
+            dailyCtx.beginPath();
+            dailyCtx.moveTo(padLeft, zeroY);
+            dailyCtx.lineTo(W - padRight, zeroY);
+            dailyCtx.stroke();
+            dailyCtx.fillText('0.0%', W - padRight + 10, zeroY + 3);
+
+            // Draw Daily Bars
+            const slotW = chartW / dailyData.length;
+            const barW = Math.max(2, slotW - 1.5);
+
+            for (let i = 0; i < dailyData.length; i++) {{
+                const d = dailyData[i];
+                const x = padLeft + i * slotW + (slotW - barW) / 2;
+                const yVal = getYPct(d.pct_vs_prev);
+                const isPos = d.pct_vs_prev >= 0;
+
+                const topY = isPos ? yVal : zeroY;
+                const barH = Math.max(2, Math.abs(yVal - zeroY));
+
+                dailyCtx.fillStyle = isPos ? '#3fb950' : '#f85149';
+                if (i === hoveredDailyIdx) {{
+                    dailyCtx.fillStyle = '#fff'; // Highlight on hover
+                }}
+                dailyCtx.fillRect(x, topY, barW, barH);
+
+                dailyHitboxes.push({{
+                    idx: i,
+                    data: d,
+                    x: x,
+                    y: topY,
+                    w: barW,
+                    h: barH
+                }});
+            }}
+
+            // Right Axis Mask
+            dailyCtx.fillStyle = '#161b22';
+            dailyCtx.fillRect(W - padRight, 0, padRight, H);
+            dailyCtx.strokeStyle = '#30363d';
+            dailyCtx.beginPath();
+            dailyCtx.moveTo(W - padRight, 0);
+            dailyCtx.lineTo(W - padRight, H);
+            dailyCtx.stroke();
+            dailyCtx.fillStyle = '#8b949e';
+            dailyCtx.font = '10px sans-serif';
+            dailyCtx.fillText('0.0%', W - padRight + 10, zeroY + 3);
+        }}
+
+        // --- DRAW MONTHLY PNL CHART (% vs Month-1 Equity) ---
+        function drawMonthlyPnLChart() {{
+            const W = monthlyCanvas.width;
+            const H = monthlyCanvas.height;
+            monthlyCtx.clearRect(0, 0, W, H);
+            monthlyHitboxes = [];
+            if (monthlyData.length === 0) return;
+
+            let maxAbsPct = 3.0;
+            for (let m of monthlyData) {{
+                const a = Math.abs(m.pct_vs_prev);
+                if (a > maxAbsPct) maxAbsPct = a;
+            }}
+            maxAbsPct = Math.max(5.0, maxAbsPct * 1.25); // Add headroom for label text
+
+            const chartW = W - padLeft - padRight;
+            const chartH = H - 45;
+            const zeroY = 20 + chartH * (maxAbsPct / (maxAbsPct * 1.5)); // Balanced zero axis
+
+            function getYPct(pct) {{
+                return zeroY - (pct / maxAbsPct) * (chartH * 0.65);
+            }}
+
+            // Zero Line
+            monthlyCtx.strokeStyle = '#30363d';
+            monthlyCtx.lineWidth = 1.5;
+            monthlyCtx.beginPath();
+            monthlyCtx.moveTo(padLeft, zeroY);
+            monthlyCtx.lineTo(W - padRight, zeroY);
+            monthlyCtx.stroke();
+
+            monthlyCtx.fillStyle = '#8b949e';
+            monthlyCtx.font = '10px -apple-system, sans-serif';
+            monthlyCtx.textAlign = 'left';
+            monthlyCtx.fillText('0.0%', W - padRight + 10, zeroY + 3);
+
+            // Draw Monthly Bars
+            const slotW = chartW / monthlyData.length;
+            const barW = Math.max(12, Math.min(32, slotW * 0.65));
+
+            for (let i = 0; i < monthlyData.length; i++) {{
+                const m = monthlyData[i];
+                const xCenter = padLeft + i * slotW + slotW / 2;
+                const x = xCenter - barW / 2;
+                const yVal = getYPct(m.pct_vs_prev);
+                const isPos = m.pct_vs_prev >= 0;
+
+                const topY = isPos ? yVal : zeroY;
+                const barH = Math.max(3, Math.abs(yVal - zeroY));
+
+                // Bar fill
+                monthlyCtx.fillStyle = isPos ? '#238636' : '#da3633';
+                if (i === hoveredMonthlyIdx) {{
+                    monthlyCtx.fillStyle = isPos ? '#3fb950' : '#f85149';
+                    monthlyCtx.strokeStyle = '#fff';
+                    monthlyCtx.lineWidth = 1.5;
+                    monthlyCtx.strokeRect(x, topY, barW, barH);
+                }}
+                monthlyCtx.fillRect(x, topY, barW, barH);
+
+                // Label above / below bar (% vs Month-1)
+                monthlyCtx.fillStyle = isPos ? '#3fb950' : '#f85149';
+                monthlyCtx.font = 'bold 10px -apple-system, sans-serif';
+                monthlyCtx.textAlign = 'center';
+                const pctStr = (isPos ? '+' : '') + m.pct_vs_prev.toFixed(1) + '%';
+                if (isPos) {{
+                    monthlyCtx.fillText(pctStr, xCenter, topY - 5);
+                }} else {{
+                    monthlyCtx.fillText(pctStr, xCenter, topY + barH + 12);
+                }}
+
+                // Month Name underneath
+                monthlyCtx.fillStyle = '#8b949e';
+                monthlyCtx.font = '10px sans-serif';
+                monthlyCtx.fillText(m.label, xCenter, H - 6);
+
+                monthlyHitboxes.push({{
+                    idx: i,
+                    data: m,
+                    x: x,
+                    y: topY,
+                    w: barW,
+                    h: barH,
+                    xCenter: xCenter
+                }});
+            }}
+
+            // Right Axis Mask
+            monthlyCtx.fillStyle = '#161b22';
+            monthlyCtx.fillRect(W - padRight, 0, padRight, H);
+            monthlyCtx.strokeStyle = '#30363d';
+            monthlyCtx.beginPath();
+            monthlyCtx.moveTo(W - padRight, 0);
+            monthlyCtx.lineTo(W - padRight, H);
+            monthlyCtx.stroke();
+            monthlyCtx.fillStyle = '#8b949e';
+            monthlyCtx.font = '10px sans-serif';
+            monthlyCtx.fillText('0.0%', W - padRight + 10, zeroY + 3);
+        }}
+
+        // --- DAILY CANVAS INTERACTIONS ---
+        dailyCanvas.addEventListener('mousemove', e => {{
+            const rect = dailyCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            let hit = null;
+            for (let hb of dailyHitboxes) {{
+                if (mouseX >= hb.x - 2 && mouseX <= hb.x + hb.w + 2) {{
+                    hit = hb;
+                    break;
+                }}
+            }}
+
+            if (hit) {{
+                hoveredDailyIdx = hit.idx;
+                drawDailyPnLChart();
+
+                const d = hit.data;
+                const pnlCol = d.pnl >= 0 ? '#3fb950' : '#f85149';
+                const sign = d.pnl >= 0 ? '+' : '';
+                document.getElementById('daily-stat-badge').innerHTML = 
+                    `📅 <strong>${{d.date}}</strong>: PnL <strong style="color:${{pnlCol}};">${{sign}}$${{d.pnl.toFixed(2)}}</strong> | <strong style="color:${{pnlCol}};">${{sign}}${{d.pct_vs_prev}}% vs H-1</strong> (Eq: $${{d.prev_eq.toLocaleString()}} → $${{d.end_eq.toLocaleString()}})`;
+
+                tooltip.style.display = 'block';
+                tooltip.style.left = (e.clientX + 15) + 'px';
+                tooltip.style.top = (e.clientY - 20) + 'px';
+                tooltip.innerHTML = `
+                    <div style="font-weight:700; color:#fff; margin-bottom:2px;">📅 Day: ${{d.date}}</div>
+                    <div>Net PnL: <strong style="color:${{pnlCol}};">${{sign}}$${{d.pnl.toFixed(2)}}</strong></div>
+                    <div>Return vs H-1: <strong style="color:${{pnlCol}};">${{sign}}${{d.pct_vs_prev}}%</strong></div>
+                    <div>Prior Equity (H-1): <strong>$${{d.prev_eq.toLocaleString()}}</strong></div>
+                    <div>Day-End Equity: <strong>$${{d.end_eq.toLocaleString()}}</strong></div>
+                    <div>Trades: <strong>${{d.trades}}</strong> (${{d.wins}}W / ${{d.losses}}L)</div>
+                    <div style="font-size:0.7rem; color:#8b949e; margin-top:4px;">🖱️ Click bar to jump chart to this day</div>
+                `;
+            }} else {{
+                hoveredDailyIdx = -1;
+                drawDailyPnLChart();
+                tooltip.style.display = 'none';
+            }}
+        }});
+
+        dailyCanvas.addEventListener('mouseleave', () => {{
+            hoveredDailyIdx = -1;
+            drawDailyPnLChart();
+            tooltip.style.display = 'none';
+            document.getElementById('daily-stat-badge').textContent = 'Hover any bar for H-1 return & PnL';
+        }});
+
+        dailyCanvas.addEventListener('click', e => {{
+            const rect = dailyCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            for (let hb of dailyHitboxes) {{
+                if (mouseX >= hb.x - 2 && mouseX <= hb.x + hb.w + 2) {{
+                    const barIdx = findBarIndex(hb.data.first_ts);
+                    startIdx = Math.max(0, barIdx - 15);
+                    viewCount = 100;
+                    resetPriceScale();
+                    drawChart();
+                    document.getElementById('inspect-banner').innerHTML = 
+                        `Jumped to Date: <strong>${{hb.data.date}}</strong> | Day Return: <strong style="color:${{hb.data.pct_vs_prev >= 0 ? '#3fb950' : '#f85149'}};">${{hb.data.pct_vs_prev >= 0 ? '+' : ''}}${{hb.data.pct_vs_prev}}% vs H-1</strong>`;
+                    break;
+                }}
+            }}
+        }});
+
+        // --- MONTHLY CANVAS INTERACTIONS ---
+        monthlyCanvas.addEventListener('mousemove', e => {{
+            const rect = monthlyCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            let hit = null;
+            for (let hb of monthlyHitboxes) {{
+                if (mouseX >= hb.x - 4 && mouseX <= hb.x + hb.w + 4) {{
+                    hit = hb;
+                    break;
+                }}
+            }}
+
+            if (hit) {{
+                hoveredMonthlyIdx = hit.idx;
+                drawMonthlyPnLChart();
+
+                const m = hit.data;
+                const pnlCol = m.pnl >= 0 ? '#3fb950' : '#f85149';
+                const sign = m.pnl >= 0 ? '+' : '';
+                document.getElementById('monthly-stat-badge').innerHTML = 
+                    `📆 <strong>${{m.label}}</strong>: PnL <strong style="color:${{pnlCol}};">${{sign}}$${{m.pnl.toFixed(2)}}</strong> | <strong style="color:${{pnlCol}};">${{sign}}${{m.pct_vs_prev}}% vs M-1</strong>`;
+
+                tooltip.style.display = 'block';
+                tooltip.style.left = (e.clientX + 15) + 'px';
+                tooltip.style.top = (e.clientY - 20) + 'px';
+                tooltip.innerHTML = `
+                    <div style="font-weight:700; color:#fff; margin-bottom:2px;">📆 Month: ${{m.label}} (${{m.month}})</div>
+                    <div>Net PnL: <strong style="color:${{pnlCol}};">${{sign}}$${{m.pnl.toFixed(2)}}</strong></div>
+                    <div>Return vs Month-1: <strong style="color:${{pnlCol}};">${{sign}}${{m.pct_vs_prev}}%</strong></div>
+                    <div>Prior Month Eq (M-1): <strong>$${{m.prev_eq.toLocaleString()}}</strong></div>
+                    <div>Month-End Equity: <strong>$${{m.end_eq.toLocaleString()}}</strong></div>
+                    <div>Trades: <strong>${{m.trades}}</strong> (${{m.wins}}W / ${{m.losses}}L | ${{m.win_rate}}% Win Rate)</div>
+                    <div style="font-size:0.7rem; color:#8b949e; margin-top:4px;">🖱️ Click bar to jump chart to this month</div>
+                `;
+            }} else {{
+                hoveredMonthlyIdx = -1;
+                drawMonthlyPnLChart();
+                tooltip.style.display = 'none';
+            }}
+        }});
+
+        monthlyCanvas.addEventListener('mouseleave', () => {{
+            hoveredMonthlyIdx = -1;
+            drawMonthlyPnLChart();
+            tooltip.style.display = 'none';
+            document.getElementById('monthly-stat-badge').textContent = 'Hover any bar for M-1 return & PnL';
+        }});
+
+        monthlyCanvas.addEventListener('click', e => {{
+            const rect = monthlyCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            for (let hb of monthlyHitboxes) {{
+                if (mouseX >= hb.x - 4 && mouseX <= hb.x + hb.w + 4) {{
+                    const barIdx = findBarIndex(hb.data.first_ts);
+                    startIdx = Math.max(0, barIdx - 10);
+                    viewCount = 300;
+                    resetPriceScale();
+                    drawChart();
+                    document.getElementById('inspect-banner').innerHTML = 
+                        `Jumped to Month: <strong>${{hb.data.label}}</strong> | Return: <strong style="color:${{hb.data.pct_vs_prev >= 0 ? '#3fb950' : '#f85149'}};">${{hb.data.pct_vs_prev >= 0 ? '+' : ''}}${{hb.data.pct_vs_prev}}% vs Month-1</strong>`;
+                    break;
+                }}
+            }}
+        }});
+
+        // --- MOUSE INTERACTIONS (PAN & SCALE FOR CANDLESTICK) ---
         let dragMode = null;
         let startMouseX = 0;
         let startMouseY = 0;
@@ -967,7 +1346,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
     with open(out_path, "w") as f:
         f.write(html)
 
-    print(f"[Visualizer] SUCCESS! Generated ultra-responsive visualizer at: {out_path.resolve()} ({out_path.stat().st_size / (1024**2):.2f} MB)")
+    print(f"[Visualizer] SUCCESS! Generated ultra-responsive visualizer with Daily & Monthly PnL (% vs H-1 / M-1) at: {out_path.resolve()} ({out_path.stat().st_size / (1024**2):.2f} MB)")
     return str(out_path.resolve())
 
 
