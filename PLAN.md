@@ -49,9 +49,10 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
 
 *   **Status**: **SELESAI.**
 *   **Modul Baru**:
-    - `strategies/incubator/strat_6_intraday_smc.py`: Menggabungkan struktur H1 (BOS/CHoCH) dengan eksekusi M15 di zona Order Block & Inversion FVG, menerapkan Callisto Trade Management (50% TP1 @ 1.5R, SL ke Breakeven, 50% Runner @ 4.0R).
-*   **Temuan Kunci**:
-    - **Timeframe M15 vs M5**: Pada M15, strategi SMC menghasilkan Win Rate tinggi **62.5%** dan Profit Factor **2.17** dengan Max Drawdown sangat kecil (**1.8%**). Sedangkan pada M5, sinyal terlalu banyak noise.
-    - **Dual-Horizon Execution**: Menjalankan Scalper M1 (Golden Window) bersama Intraday M15 secara terisolasi menghasilkan diversifikasi yang solid dengan ekuitas gabungan yang stabil.
+    - `strategies/incubator/strat_6_intraday_smc.py`: Menggabungkan struktur H1 (BOS/CHoCH) dengan eksekusi M15 di zona Order Block & Inversion FVG.
+    - `strategies/modules/setups/fibonacci_confluence.py`: Engine kalkulasi Fibonacci Retracement (Golden Pocket 61.8% - 78.6% OTE) & Fibonacci Extension (1.272 & 1.618 Wave 3 Expansion Target) berbasis prinsip Elliott Wave Theory.
+*   **Temuan Kunci (Fibonacci & Multi-TP)**:
+    1.  **Single TP vs Multi-Stage TP**: Terbukti secara kuantitatif bahwa 1 Single Target (100% @ 3.0R) mencetak profit 4x lebih tinggi (+$880 vs +$230) dibanding memecah order ke banyak TP (TP3, TP4, TP5) karena fragmentasi volume dan beban komisi broker.
+    2.  **Fibonacci Golden Pocket Confluence (M15/H1)**: Menggabungkan zona Order Block dengan Golden Pocket (61.8% - 78.6% OTE) melompatkan Win Rate ke **75.0%** dengan Profit Factor luar biasa **5.65**! Sebaliknya, Fibonacci pada M5 gagal total (PF 0.63) akibat noise volatilitas mikro.
 
 ---
