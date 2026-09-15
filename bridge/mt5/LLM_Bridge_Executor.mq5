@@ -198,9 +198,13 @@ void ProcessCommand(string cmdJson)
       double sl        = ExtractJsonDouble(cmdJson, "sl");
       double tp        = ExtractJsonDouble(cmdJson, "tp");
       string comment   = ExtractJsonString(cmdJson, "comment");
+      long   magic     = (long)ExtractJsonDouble(cmdJson, "magic");
 
       if(symbol == "") symbol = _Symbol;
       if(comment == "") comment = "LLM_AI_Trade";
+      if(magic <= 0) magic = (long)InpMagicNumber;
+
+      m_trade.SetExpertMagicNumber((ulong)magic);
 
       bool success = false;
       if(side == "BUY")
@@ -216,22 +220,24 @@ void ProcessCommand(string cmdJson)
 
       // Send execution receipt back to Python
       string receipt = StringFormat(
-         "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":%s,\"ticket\":%I64u,\"retcode\":%d,\"deal\":%I64u,\"price\":%.2f}\n",
+         "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":%s,\"ticket\":%I64u,\"retcode\":%d,\"deal\":%I64u,\"price\":%.2f,\"magic\":%I64u}\n",
          symbol, side, lots, success ? "true" : "false",
-         m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultDeal(), m_trade.ResultPrice()
+         m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultDeal(), m_trade.ResultPrice(), (ulong)magic
       );
       SendString(receipt);
-      PrintFormat("[LLM Bridge] Order %s %s %.2f -> Result: %s (Deal: %I64u, Price: %.2f)",
-                  side, symbol, lots, success ? "OK" : "FAILED", m_trade.ResultDeal(), m_trade.ResultPrice());
+      PrintFormat("[LLM Bridge] Order %s %s %.2f (Magic: %I64u) -> Result: %s (Deal: %I64u, Price: %.2f)",
+                  side, symbol, lots, (ulong)magic, success ? "OK" : "FAILED", m_trade.ResultDeal(), m_trade.ResultPrice());
    }
    else if(action == "CLOSE_ALL")
    {
       string symbol = ExtractJsonString(cmdJson, "symbol");
+      long   magic  = (long)ExtractJsonDouble(cmdJson, "magic");
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          if(m_position.SelectByIndex(i))
          {
-            if(m_position.Magic() == InpMagicNumber && (symbol == "" || m_position.Symbol() == symbol))
+            bool matchMagic = (magic <= 0) || (m_position.Magic() == (ulong)magic);
+            if(matchMagic && (symbol == "" || m_position.Symbol() == symbol))
             {
                m_trade.PositionClose(m_position.Ticket());
             }
