@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLMTrading Visualizer (All Trades Multi-Trajectory)</title>
+    <title>LLMTrading Visualizer (TradingView-Style Price Drag Zoom)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -98,7 +98,7 @@
             justify-content: space-between;
             align-items: center;
         }
-        canvas { display: block; width: 100%; cursor: crosshair; }
+        canvas { display: block; width: 100%; }
         
         #tooltip {
             position: absolute;
@@ -154,7 +154,7 @@
 </head>
 <body>
     <header>
-        <h1>LLMTrading Visualizer <span class="badge">Multi-Trajectory View</span></h1>
+        <h1>LLMTrading Visualizer <span class="badge">TradingView Price Scale Zoom</span></h1>
         <div style="font-size:0.85rem; color:#8b949e;">
             Asset: <strong style="color:#fff;">XAUUSD M1</strong> | Bars: <strong>7,182</strong> | Trades: <strong>135</strong>
         </div>
@@ -194,31 +194,31 @@
     </div>
 
     <div id="toolbar">
-        <span style="font-size:0.82rem; font-weight:600; color:#8b949e;">DISPLAY MODE:</span>
+        <span style="font-size:0.82rem; font-weight:600; color:#8b949e;">MODE:</span>
         <button id="btn-all" class="btn active" onclick="setDisplayMode('all')">✨ Show ALL 135 Trades</button>
-        <button id="btn-wins" class="btn" onclick="setDisplayMode('wins')">🟢 Winners Only</button>
-        <button id="btn-losses" class="btn" onclick="setDisplayMode('losses')">🔴 Losers Only</button>
-        <button id="btn-single" class="btn" onclick="setDisplayMode('single')">🎯 Focused Trade</button>
+        <button id="btn-wins" class="btn" onclick="setDisplayMode('wins')">🟢 Winners</button>
+        <button id="btn-losses" class="btn" onclick="setDisplayMode('losses')">🔴 Losers</button>
 
         <select id="trade-select" onchange="onSelectTradeDropdown(this.value)">
-            <option value="">-- Jump to Specific Trade --</option>
+            <option value="">-- Jump to Trade --</option>
         </select>
         
-        <button class="btn" onclick="zoomIn()">Zoom In (+)</button>
-        <button class="btn" onclick="zoomOut()">Zoom Out (-)</button>
-        <button class="btn" onclick="fitAllChart()">Fit Entire Dataset</button>
+        <button class="btn" onclick="resetPriceScale()">Reset Vertical Scale</button>
+        <button class="btn" onclick="fitAllChart()">Fit Dataset</button>
 
         <div style="margin-left:auto; display:flex; gap:14px; font-size:0.82rem; align-items:center;">
-            <span><strong style="color:#3fb950; font-size:1.1rem;">- - - ↗</strong> Win Trade</span>
-            <span><strong style="color:#f85149; font-size:1.1rem;">- - - ↘</strong> Loss Trade</span>
-            <span><strong style="color:#58a6ff;">●</strong> Entry</span>
+            <span style="color:#58a6ff; font-weight:600;">↕ Drag Price Scale on Right to Zoom Vertically</span>
+            <span><strong style="color:#3fb950; font-size:1.1rem;">- - - ↗</strong> Win</span>
+            <span><strong style="color:#f85149; font-size:1.1rem;">- - - ↘</strong> Loss</span>
         </div>
     </div>
 
     <div class="chart-box">
         <div class="chart-header">
-            <span id="inspect-banner">Mode: Showing ALL 135 Trade Trajectories simultaneously</span>
-            <span style="font-size:0.75rem; color:#8b949e;">Scroll to zoom • Drag to pan • Hover over lines for details</span>
+            <span id="inspect-banner">Mode: Showing ALL 135 Trades simultaneously</span>
+            <span style="font-size:0.75rem; color:#8b949e;">
+                🖱️ Chart: Drag to pan horizontally • Right Scale: Drag Up/Down to zoom price vertically
+            </span>
         </div>
         <canvas id="candle-canvas" height="560"></canvas>
         <div id="tooltip"></div>
@@ -263,12 +263,20 @@
         const tooltip = document.getElementById('tooltip');
         
         let startIdx = 0;
-        let viewCount = 180; // Show a generous view by default
-        let displayMode = 'all'; // 'all', 'wins', 'losses', 'single'
+        let viewCount = 160;
+        let displayMode = 'all';
         let focusedTradeId = null;
 
-        // Rendered line hitboxes for hover inspection
+        // Vertical Scale State (TradingView Style Price Scaling)
+        let priceScaleMultiplier = 1.0; // 1.0 = auto-scale, > 1.0 = stretched, < 1.0 = compressed
+        let priceCenterOffset = 0.0;     // Shift price up or down
+
         let tradeHitboxes = [];
+
+        const padLeft = 10;
+        const padRight = 85;
+        const padTop = 30;
+        const padBottom = 30;
 
         function resizeCanvas() {
             canvas.width = canvas.parentElement.clientWidth;
@@ -293,7 +301,6 @@
                 if (c.h > maxP) maxP = c.h;
             }
 
-            // Include visible trades in price bounds
             const visibleStartTs = slice[0].ts;
             const visibleEndTs = slice[slice.length - 1].ts;
 
@@ -307,40 +314,36 @@
                 }
             });
 
-            const pad = (maxP - minP) * 0.10 || 1.0;
-            minP -= pad;
-            maxP += pad;
+            const centerP = (minP + maxP) / 2.0 + priceCenterOffset;
+            const halfRange = ((maxP - minP) / 2.0) * (1.1 / priceScaleMultiplier) || 2.0;
 
-            const padLeft = 10;
-            const padRight = 75;
-            const padTop = 30;
-            const padBottom = 30;
+            const effectiveMinP = centerP - halfRange;
+            const effectiveMaxP = centerP + halfRange;
+
             const chartW = W - padLeft - padRight;
             const chartH = H - padTop - padBottom;
 
             function getY(p) {
-                return padTop + (1.0 - (p - minP) / (maxP - minP)) * chartH;
+                return padTop + (1.0 - (p - effectiveMinP) / (effectiveMaxP - effectiveMinP)) * chartH;
             }
 
             const barW = Math.max(1.5, (chartW / slice.length) * 0.7);
             const stepW = chartW / slice.length;
 
-            // 1. Draw Grid Lines & Right Price Axis
+            // 1. Draw Grid Lines
             ctx.strokeStyle = '#21262d';
             ctx.lineWidth = 1;
             ctx.fillStyle = '#8b949e';
             ctx.font = '11px -apple-system, sans-serif';
-            ctx.textAlign = 'left';
 
-            const priceStep = (maxP - minP) / 7;
+            const priceStep = (effectiveMaxP - effectiveMinP) / 7;
             for (let i = 0; i <= 7; i++) {
-                const p = minP + i * priceStep;
+                const p = effectiveMinP + i * priceStep;
                 const y = getY(p);
                 ctx.beginPath();
                 ctx.moveTo(padLeft, y);
                 ctx.lineTo(W - padRight, y);
                 ctx.stroke();
-                ctx.fillText('$' + p.toFixed(2), W - padRight + 6, y + 4);
             }
 
             // 2. Draw Candlesticks
@@ -369,7 +372,7 @@
                 ctx.fillRect(x - barW / 2, top, barW, bodyH);
 
                 // Timestamp label
-                const labelFreq = Math.max(10, Math.floor(viewCount / 6));
+                const labelFreq = Math.max(12, Math.floor(viewCount / 6));
                 if (i % labelFreq === 0) {
                     ctx.fillStyle = '#6e7681';
                     ctx.textAlign = 'center';
@@ -379,12 +382,9 @@
 
             // 3. Draw Trade Trajectories (DIAGONAL DASHED LINES)
             trades.forEach(tr => {
-                // Filter by mode
                 if (displayMode === 'wins' && !tr.win) return;
                 if (displayMode === 'losses' && tr.win) return;
-                if (displayMode === 'single' && tr.id !== focusedTradeId) return;
 
-                // Check visibility
                 if (tr.close_ts < visibleStartTs || tr.open_ts > visibleEndTs) return;
 
                 const openIdx = tsToIdx.get(tr.open_ts);
@@ -400,13 +400,12 @@
                 const isFocused = (tr.id === focusedTradeId);
                 const lineColor = tr.win ? '#3fb950' : '#f85149';
 
-                // Save hitbox for hover detection
                 tradeHitboxes.push({
                     trade: tr,
                     x1, y1, x2, y2
                 });
 
-                // --- Draw Diagonal Dashed Trajectory Line ---
+                // Diagonal Dashed Trajectory Line
                 ctx.strokeStyle = lineColor;
                 ctx.setLineDash(isFocused ? [6, 4] : [4, 4]);
                 ctx.lineWidth = isFocused ? 3.5 : 2;
@@ -414,21 +413,20 @@
                 ctx.moveTo(x1, y1);
                 ctx.lineTo(x2, y2);
                 ctx.stroke();
-                ctx.setLineDash([]); // Reset
+                ctx.setLineDash([]);
 
-                // --- Draw Entry Dot (Blue) at Exact Price ---
+                // Entry Dot (Blue)
                 ctx.fillStyle = '#58a6ff';
                 ctx.beginPath();
                 ctx.arc(x1, y1, isFocused ? 5.5 : 3.5, 0, Math.PI * 2);
                 ctx.fill();
 
-                // --- Draw Exit Dot (Green or Red) at Exact Price ---
+                // Exit Dot
                 ctx.fillStyle = lineColor;
                 ctx.beginPath();
                 ctx.arc(x2, y2, isFocused ? 6.5 : 4, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Draw Label Badge if focused or few bars
                 if (isFocused || viewCount <= 90) {
                     ctx.font = isFocused ? 'bold 11px -apple-system, sans-serif' : '10px -apple-system, sans-serif';
                     ctx.fillStyle = '#58a6ff';
@@ -440,18 +438,102 @@
                     ctx.fillText(pnlText, x2, y2 + (tr.win ? -8 : 14));
                 }
             });
+
+            // 4. Draw Right Price Scale Axis Background (TradingView Style)
+            ctx.fillStyle = '#161b22';
+            ctx.fillRect(W - padRight, 0, padRight, H);
+            ctx.strokeStyle = '#30363d';
+            ctx.beginPath();
+            ctx.moveTo(W - padRight, 0);
+            ctx.lineTo(W - padRight, H);
+            ctx.stroke();
+
+            // Price Labels on Right Scale
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#8b949e';
+            for (let i = 0; i <= 7; i++) {
+                const p = effectiveMinP + i * priceStep;
+                const y = getY(p);
+                ctx.fillText('$' + p.toFixed(2), W - padRight + 10, y + 4);
+            }
+
+            // Visual Hint on Price Scale
+            ctx.fillStyle = '#30363d';
+            ctx.fillRect(W - 14, H / 2 - 20, 6, 40);
+            ctx.fillStyle = '#58a6ff';
+            ctx.font = '10px sans-serif';
+            ctx.fillText('↕', W - 14, H / 2 + 4);
         }
 
-        // Hover Tooltip Detection
-        canvas.addEventListener('mousemove', e => {
+        // Mouse Interactions: Differentiate between Chart Drag and Right Price Scale Drag
+        let dragMode = null; // 'pan-chart' or 'scale-price'
+        let startMouseX = 0;
+        let startMouseY = 0;
+        let dragStartIdx = 0;
+        let initialScaleMultiplier = 1.0;
+        let initialCenterOffset = 0.0;
+
+        canvas.addEventListener('mousedown', e => {
             const rect = canvas.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
             const mouseY = e.clientY - rect.top;
 
-            // Find closest trade line
-            let hovered = null;
-            let minDist = 12; // 12px threshold
+            startMouseX = e.clientX;
+            startMouseY = e.clientY;
 
+            // Check if user clicked on the RIGHT PRICE SCALE
+            if (mouseX >= canvas.width - padRight) {
+                dragMode = 'scale-price';
+                initialScaleMultiplier = priceScaleMultiplier;
+                initialCenterOffset = priceCenterOffset;
+                canvas.style.cursor = 'ns-resize';
+            } else {
+                dragMode = 'pan-chart';
+                dragStartIdx = startIdx;
+                canvas.style.cursor = 'grabbing';
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            dragMode = null;
+            canvas.style.cursor = 'crosshair';
+        });
+
+        window.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // Cursor change on hover
+            if (!dragMode) {
+                if (mouseX >= canvas.width - padRight) {
+                    canvas.style.cursor = 'ns-resize';
+                } else {
+                    canvas.style.cursor = 'crosshair';
+                }
+            }
+
+            if (dragMode === 'scale-price') {
+                // DRAGGING PRICE SCALE VERTICALLY (TRADINGVIEW STYLE)
+                const dy = startMouseY - e.clientY; // Drag UP zooms in, Drag DOWN zooms out
+                const scaleFactor = 1.0 + (dy * 0.01);
+                priceScaleMultiplier = Math.max(0.1, Math.min(20.0, initialScaleMultiplier * scaleFactor));
+                drawChart();
+                return;
+            }
+
+            if (dragMode === 'pan-chart') {
+                // HORIZONTAL PANNING
+                const dx = e.clientX - startMouseX;
+                const deltaBars = Math.round((dx / canvas.width) * viewCount);
+                startIdx = Math.max(0, Math.min(candles.length - viewCount, dragStartIdx - deltaBars));
+                drawChart();
+                return;
+            }
+
+            // Hover Tooltip Check when not dragging
+            let hovered = null;
+            let minDist = 12;
             for (let hb of tradeHitboxes) {
                 const d = distToSegment(mouseX, mouseY, hb.x1, hb.y1, hb.x2, hb.y2);
                 if (d < minDist) {
@@ -460,7 +542,7 @@
                 }
             }
 
-            if (hovered) {
+            if (hovered && mouseX < canvas.width - padRight) {
                 tooltip.style.display = 'block';
                 tooltip.style.left = (e.clientX + 15) + 'px';
                 tooltip.style.top = (e.clientY - 20) + 'px';
@@ -483,6 +565,43 @@
             tooltip.style.display = 'none';
         });
 
+        // Double Click on Price Scale to Reset Vertical Scale
+        canvas.addEventListener('dblclick', e => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            if (mouseX >= canvas.width - padRight) {
+                resetPriceScale();
+            }
+        });
+
+        function resetPriceScale() {
+            priceScaleMultiplier = 1.0;
+            priceCenterOffset = 0.0;
+            drawChart();
+        }
+
+        // Wheel to Zoom Horizontally
+        canvas.addEventListener('wheel', e => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+
+            if (mouseX >= canvas.width - padRight) {
+                // Wheel on Price Scale zooms vertically!
+                const zoomIn = (e.deltaY < 0);
+                priceScaleMultiplier = Math.max(0.1, Math.min(20.0, priceScaleMultiplier * (zoomIn ? 1.15 : 0.85)));
+                drawChart();
+            } else {
+                // Wheel on Chart zooms horizontally
+                const zoomIn = (e.deltaY < 0);
+                const delta = zoomIn ? -Math.max(5, Math.floor(viewCount * 0.15)) : Math.max(5, Math.floor(viewCount * 0.15));
+                const newCount = Math.max(25, Math.min(candles.length, viewCount + delta));
+                startIdx = Math.max(0, Math.min(candles.length - newCount, startIdx + Math.round((viewCount - newCount) / 2)));
+                viewCount = newCount;
+                drawChart();
+            }
+        }, { passive: false });
+
         function distToSegment(px, py, x1, y1, x2, y2) {
             const l2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
             if (l2 === 0) return Math.hypot(px - x1, py - y1);
@@ -491,70 +610,30 @@
             return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
         }
 
-        // Interactivity: Drag to Pan
-        let isDragging = false;
-        let dragStartX = 0;
-        let dragStartIdx = 0;
-
-        canvas.addEventListener('mousedown', e => {
-            isDragging = true;
-            dragStartX = e.clientX;
-            dragStartIdx = startIdx;
-        });
-        window.addEventListener('mouseup', () => isDragging = false);
-        window.addEventListener('mousemove', e => {
-            if (!isDragging) return;
-            const dx = e.clientX - dragStartX;
-            const deltaBars = Math.round((dx / canvas.width) * viewCount);
-            startIdx = Math.max(0, Math.min(candles.length - viewCount, dragStartIdx - deltaBars));
-            drawChart();
-        });
-
-        // Interactivity: Wheel to Zoom
-        canvas.addEventListener('wheel', e => {
-            e.preventDefault();
-            const zoomIn = (e.deltaY < 0);
-            const delta = zoomIn ? -Math.max(5, Math.floor(viewCount * 0.15)) : Math.max(5, Math.floor(viewCount * 0.15));
-            const newCount = Math.max(25, Math.min(candles.length, viewCount + delta));
-            startIdx = Math.max(0, Math.min(candles.length - newCount, startIdx + Math.round((viewCount - newCount) / 2)));
-            viewCount = newCount;
-            drawChart();
-        }, { passive: false });
-
-        // Mode Switching
         function setDisplayMode(mode) {
             displayMode = mode;
             document.querySelectorAll('#toolbar .btn').forEach(b => b.classList.remove('active'));
             if (mode === 'all') document.getElementById('btn-all').classList.add('active');
             if (mode === 'wins') document.getElementById('btn-wins').classList.add('active');
             if (mode === 'losses') document.getElementById('btn-losses').classList.add('active');
-            if (mode === 'single') document.getElementById('btn-single').classList.add('active');
 
             const countMap = {
                 'all': 'ALL 135 Trades',
                 'wins': 'Winners Only (56 Trades)',
-                'losses': 'Losers Only (79 Trades)',
-                'single': `Focused Trade #${focusedTradeId || 1}`
+                'losses': 'Losers Only (79 Trades)'
             };
             document.getElementById('inspect-banner').textContent = `Mode: Showing ${countMap[mode]}`;
             drawChart();
         }
 
-        function zoomIn() {
-            viewCount = Math.max(25, Math.floor(viewCount * 0.7));
-            drawChart();
-        }
-        function zoomOut() {
-            viewCount = Math.min(candles.length, Math.floor(viewCount * 1.4));
-            drawChart();
-        }
         function fitAllChart() {
             startIdx = 0;
             viewCount = candles.length;
+            resetPriceScale();
             drawChart();
         }
 
-        // Table & Dropdown Population
+        // Populate Table & Dropdown
         const select = document.getElementById('trade-select');
         const tbody = document.getElementById('trades-tbody');
 
@@ -596,7 +675,6 @@
             focusedTradeId = tradeId;
             select.value = tradeId;
 
-            // Highlight table row
             document.querySelectorAll('.clickable-row').forEach(r => r.classList.remove('selected-row'));
             const r = document.getElementById('row-' + tradeId);
             if (r) {
@@ -604,13 +682,13 @@
                 r.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
 
-            // Center chart on this trade
             const openIdx = tsToIdx.get(tr.open_ts) || 0;
             const closeIdx = tsToIdx.get(tr.close_ts) || openIdx;
             const dur = Math.max(1, closeIdx - openIdx);
 
             viewCount = Math.max(35, dur + 25);
             startIdx = Math.max(0, openIdx - 10);
+            resetPriceScale();
 
             const pnlStr = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(2);
             document.getElementById('inspect-banner').innerHTML = 
@@ -619,7 +697,6 @@
             drawChart();
         }
 
-        // Initial setup: Show all trades mode
         resizeCanvas();
         setDisplayMode('all');
     </script>
