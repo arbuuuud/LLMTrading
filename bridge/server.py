@@ -35,6 +35,7 @@ from agents.risk_manager.gatekeeper import TradeApproval
 from engine.core.types import OrderDirection
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 from strategies.incubator.strat_6_intraday_smc import IntradaySMCStrategy
+from tests.test_nfc_fibo_hybrid import NFCFiboHybridStrategy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -246,14 +247,12 @@ class LiveBridgeServer:
         self.scalper_strategy.set_engine(self.scalper_adapter)
         self.scalper_strategy.on_init()
 
-        # Engine 2: Priority 2 Intraday M15 (Magic 2001)
-        self.intraday_adapter = LiveBridgeEngineAdapter(self, magic=2001, strategy_name="Intraday_M15_SMC")
-        self.intraday_strategy = IntradaySMCStrategy(
-            base_risk_pct=0.50,
-            tp1_r=1.5,
-            tp2_r=4.0,
-            sl_buffer_dollars=1.50,
-            poi_tolerance_dollars=1.00
+        # Engine 2: Priority 2 Intraday M15 (Magic 2001 - Fadli NFC Unfilled Base + H1 EMA 50)
+        self.intraday_adapter = LiveBridgeEngineAdapter(self, magic=2001, strategy_name="Intraday_M15_NFC")
+        self.intraday_strategy = NFCFiboHybridStrategy(
+            rr_target=2.5,
+            use_macro_ema=True,
+            use_fibo_ote=False
         )
         self.intraday_strategy.set_engine(self.intraday_adapter)
         self.intraday_strategy.on_init()

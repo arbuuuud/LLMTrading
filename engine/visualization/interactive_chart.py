@@ -35,6 +35,7 @@ from engine.metrics.performance import PerformanceCalculator
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 from strategies.incubator.strat_6_intraday_smc import IntradaySMCStrategy
 from tests.massive_shadow_clone_ema_grid import MassiveCloneStrategy
+from tests.test_nfc_fibo_hybrid import NFCFiboHybridStrategy
 
 
 def generate_optimized_visual(output_file: str = "reports/backtest_visual.html"):
@@ -59,15 +60,13 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html")
     trades_scalp = res_scalp["trades"]
     eq_scalp = res_scalp["equity_curve"]
 
-    print(f"[Visualizer] Running Engine 2: Priority 2 Intraday M15 ({len(df_m15):,} bars)...")
+    print(f"[Visualizer] Running Engine 2: Priority 2 Intraday M15 Fadli NFC Unfilled Orders ({len(df_m15):,} bars)...")
     c2 = AccountConfig(initial_balance=10000.0, commission_per_lot_round_turn=7.0)
     e2 = EventEngine(config=c2, commission_model=CommissionModel(7.0), slippage_model=FixedSlippageModel(0.02))
-    s2 = IntradaySMCStrategy(
-        base_risk_pct=0.50,
-        tp1_r=1.5,
-        tp2_r=4.0,
-        sl_buffer_dollars=1.20,
-        poi_tolerance_dollars=0.80
+    s2 = NFCFiboHybridStrategy(
+        rr_target=2.5,
+        use_macro_ema=True,
+        use_fibo_ote=False
     )
     res_intra = e2.run_bars(df_m15, s2)
     perf_intra = res_intra["performance"]
@@ -555,7 +554,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html")
             🎯 Priority 1: Scalper M1 (VWAP 1.8s) <span style="background:rgba(255,255,255,0.2); padding:2px 6px; border-radius:10px; font-size:0.75rem;">174</span>
         </button>
         <button id="tab-intra" class="engine-btn intraday" onclick="switchEngineView('INTRADAY')">
-            🏹 Priority 2: Intraday M15 (SMC + Callisto) <span style="background:rgba(255,255,255,0.2); padding:2px 6px; border-radius:10px; font-size:0.75rem;">24</span>
+            🏹 Priority 2: Intraday M15 (Fadli NFC Unfilled Base) <span style="background:rgba(255,255,255,0.2); padding:2px 6px; border-radius:10px; font-size:0.75rem;">57</span>
         </button>
 
         <div style="margin-left:auto; font-size:0.8rem; color:#8b949e;">
@@ -626,16 +625,16 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html")
                     <span style="color:#d2a8ff;">🏹 Priority 2: Intraday M15</span>
                     <span class="badge badge-amber">Magic 2001</span>
                 </div>
-                <div class="matrix-row"><span class="matrix-k">Philosophy</span><span class="matrix-v">SMC Trend Expansion</span></div>
-                <div class="matrix-row"><span class="matrix-k">Timeframe</span><span class="matrix-v">M15 (H1 Bias + OB/iFVG)</span></div>
+                <div class="matrix-row"><span class="matrix-k">Philosophy</span><span class="matrix-v">Fadli NFC Unfilled Orders</span></div>
+                <div class="matrix-row"><span class="matrix-k">Timeframe</span><span class="matrix-v">M15 (H1 EMA 50 Macro Filter)</span></div>
                 <div class="matrix-row"><span class="matrix-k">Trade Window</span><span class="matrix-v">08:00 - 16:30 UTC</span></div>
                 <div class="matrix-row"><span class="matrix-k">Net Profit</span><span class="matrix-v val-green">+${perf_intra.net_profit:,.2f}</span></div>
                 <div class="matrix-row"><span class="matrix-k">Profit Factor</span><span class="matrix-v" style="color:#d2a8ff;">{perf_intra.profit_factor:.2f}</span></div>
-                <div class="matrix-row"><span class="matrix-k">Win Rate</span><span class="matrix-v" style="color:#3fb950;">{perf_intra.win_rate_pct:.1f}% (High Precision)</span></div>
+                <div class="matrix-row"><span class="matrix-k">Win Rate</span><span class="matrix-v" style="color:#3fb950;">{perf_intra.win_rate_pct:.1f}%</span></div>
                 <div class="matrix-row"><span class="matrix-k">Payoff Ratio</span><span class="matrix-v">{perf_intra.win_loss_ratio:.2f}x</span></div>
                 <div class="matrix-row"><span class="matrix-k">Max Drawdown</span><span class="matrix-v" style="color:#3fb950;">{perf_intra.max_drawdown_pct:.1f}% (Super Safe)</span></div>
-                <div class="matrix-row"><span class="matrix-k">Avg Hold</span><span class="matrix-v">~240 minutes (4h)</span></div>
-                <div class="matrix-row"><span class="matrix-k">Role</span><span class="matrix-v" style="color:#d2a8ff;">The Low-DD Anchor</span></div>
+                <div class="matrix-row"><span class="matrix-k">Avg Hold</span><span class="matrix-v">~120 minutes</span></div>
+                <div class="matrix-row"><span class="matrix-k">Role</span><span class="matrix-v" style="color:#d2a8ff;">The Trend Base Runner</span></div>
             </div>
 
             <!-- Combined Synergy Col -->

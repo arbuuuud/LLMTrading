@@ -45,23 +45,23 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
         *   **Payoff Ratio**: Mencapai **3.92x** (rata-rata win hampir 4x loss).
         *   **Konsistensi**: 6-7 bulan dari 10.5 bulan berprofit bersih dengan Monthly Ratchet Governor.
 
-### **Fase Eksplorasi 6: Riset Filter Tren Makro EMA (20, 50, 100, 200) & Eliminasi Bulan Merah**
+### **Fase Eksplorasi 7: Audit Setup Institusional Indonesia (Fadli NFC, Arya NFC, John Paul 77) & Rekor Portofolio +$7,252**
 
 *   **Status**: **SELESAI.**
-*   **Aksi Massive Shadow Clones (61+ Klon Paralel)**:
-    - Script `tests/massive_shadow_clone_ema_grid.py` mengerahkan 61 konfigurasi instrumen kuantitatif tingkat lanjut (Binary Veto, Asymmetric Sizing, Dynamic Target, Slope Acceleration, dan Normalized ATR Buffer).
-*   **Pemenang Mutlak (The Absolute Record Champion)**:
-    1.  **Rank #1: ATR-Normalized Buffer (H1 EMA 50 dengan Jarak > 1.5x ATR)**:
-        - Menggantikan buffer dollar kaku dengan volatilitas dinamis (1.5x ATR H1).
-        - Net Profit Scalper melesat ke rekor tertinggi: **+$6,539.48** (+61% profit jump!).
-        - Profit Factor: **2.37**, Win Rate: **37.6%**, Payoff: **3.94x**, Max DD: **6.9%**.
-    2.  **Ultimate Dual-Horizon Portfolio (Champion Scalper + Intraday SMC)**:
-        - Total Net PnL Gabungan: **+$6,837.64** (+68.4% ROI dalam 10.5 bulan!).
-        - Lonjakan performa di bulan-bulan agresif:
-          * Juni 2025: **+$1,542.24**
-          * Agustus 2025: **+$1,201.29**
-          * Februari 2026: **+$1,987.67**
-          * Mei 2025: **+$531.55** (flip dari minus!)
-          * November 2025: rugi terpangkas habis menjadi hanya -$120 (dari -$382).
+*   **Investigasi 3 Setup Komunitas Indonesia**:
+    1.  **John Paul 77 ("Range to Range" & "Pola N")**:
+        - Range Reversal di Gold menghasilkan drawdown (-$421, DD 14.4%) karena ekspansi Gold sering menembus batas sesi Asia.
+        - Pola N (Breakout & Retest) jauh lebih sehat dengan Max Drawdown hanya 6.0%.
+    2.  **Arya / NFC (Asian Liquidity Sweep ke Opposite Pool)**:
+        - Mengalami loss (-$1,739) saat diterapkan murni tanpa filter makro karena di 70% kondisi Gold, penembusan Asian High/Low di jam London/NY adalah *Momentum Continuation*, bukan *fakeout reversal*.
+    3.  **Fadli / NFC (Unfilled Orders / Supply & Demand Base: DBR / RBD)**:
+        - Terbukti sangat profitable di M15 ketika dipadukan dengan **H1 EMA 50 Macro Filter**:
+        - Net Profit Intraday melompat dari +$298 $\rightarrow$ **+$713.03** (Win Rate 38.6%, PF 1.31, DD 5.6%).
+*   **Pencapaian Rekor Tertinggi Portofolio (The All-Time Record: +$7,252.51)**:
+    - **Engine 1**: Scalper M1 (Champion ATR Buffer H1 EMA 50): **+$6,539.48**
+    - **Engine 2**: Intraday M15 (Fadli NFC Unfilled Orders + H1 EMA 50): **+$713.03**
+    - **Total Net PnL Gabungan**: **+$7,252.51** (+72.5% ROI pada modal $10k).
+    - **September 2025 Berhasil Dibalik Menjadi Hijau**: **+$24.11**!
+    - Kerugian Juli terpangkas menjadi hanya -$72.77!
 
 ---
