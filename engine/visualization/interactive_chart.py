@@ -400,6 +400,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
 
             const effectiveMinP = centerP - halfRange;
             const effectiveMaxP = centerP + halfRange;
+            lastVisiblePriceSpan = (effectiveMaxP - effectiveMinP);
 
             const chartW = W - padLeft - padRight;
             const chartH = H - padTop - padBottom;
@@ -551,8 +552,10 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
         let startMouseX = 0;
         let startMouseY = 0;
         let dragStartIdx = 0;
+        let dragStartCenterOffset = 0.0;
         let initialScaleMultiplier = 1.0;
         let initialCenterOffset = 0.0;
+        let lastVisiblePriceSpan = 10.0;
 
         canvas.addEventListener('mousedown', e => {{
             const rect = canvas.getBoundingClientRect();
@@ -571,6 +574,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             }} else {{
                 dragMode = 'pan-chart';
                 dragStartIdx = startIdx;
+                dragStartCenterOffset = priceCenterOffset;
                 canvas.style.cursor = 'grabbing';
             }}
         }});
@@ -595,7 +599,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             }}
 
             if (dragMode === 'scale-price') {{
-                // DRAGGING PRICE SCALE VERTICALLY (TRADINGVIEW STYLE)
+                // DRAGGING PRICE SCALE VERTICALLY (TRADINGVIEW STYLE ZOOM)
                 const dy = startMouseY - e.clientY; // Drag UP zooms in, Drag DOWN zooms out
                 const scaleFactor = 1.0 + (dy * 0.01);
                 priceScaleMultiplier = Math.max(0.1, Math.min(20.0, initialScaleMultiplier * scaleFactor));
@@ -604,10 +608,19 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             }}
 
             if (dragMode === 'pan-chart') {{
-                // HORIZONTAL PANNING
+                // FULL 2D PANNING: HORIZONTAL (X) + VERTICAL (Y)
                 const dx = e.clientX - startMouseX;
+                const dy = e.clientY - startMouseY;
+
+                // 1. Horizontal Pan (Bars)
                 const deltaBars = Math.round((dx / canvas.width) * viewCount);
                 startIdx = Math.max(0, Math.min(candles.length - viewCount, dragStartIdx - deltaBars));
+
+                // 2. Vertical Pan (Price Shift Up / Down)
+                const chartH = canvas.height - padTop - padBottom;
+                const priceDelta = (dy / chartH) * lastVisiblePriceSpan;
+                priceCenterOffset = dragStartCenterOffset + priceDelta;
+
                 drawChart();
                 return;
             }}
