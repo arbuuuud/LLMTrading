@@ -1,12 +1,11 @@
 """
-Institutional Precision Visualizer (Plotly Interactive Candlestick Chart).
-Generates an institutional-grade, TradingView-style interactive HTML chart where:
-- Every trade has exact horizontal & connecting dashed lines (Entry Blue, TP Green, SL Red)
-  rendered directly at the EXACT price levels on the candlestick body/wick.
-- Shaded PnL boxes (Green for Profit, Red for Loss) spanning from entry time to exit time.
-- Exact price badges on candle points.
-- Instant search/jump dropdown to zoom into any trade.
-- Fully self-contained HTML (No server required).
+Ultra-Robust Standalone Pure SVG/Canvas Institutional Visualizer.
+100% Zero External Dependencies, Zero CDN, Zero Security Blocking in Safari/Chrome.
+Renders directly using standard HTML5 Canvas & DOM:
+- Interactive Candlestick Chart with 60fps pan and scroll wheel zoom.
+- Explicit dashed lines connecting Entry, Stop Loss, and Take Profit.
+- Trade Inspector with automatic zoom and price tag callouts.
+- Searchable, clickable trade list showing all BUY and SELL trades.
 """
 
 import sys
@@ -25,11 +24,10 @@ from engine.execution.slippage import FixedSlippageModel
 from strategies.incubator.xauusd_trend_pullback_scalper import XAUUSDTrendPullbackScalper
 
 
-def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
+def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"):
     parquet_path = "data/processed/bars/XAUUSD/M1/XAUUSD_M1.parquet"
-    print(f"[Plotly Visualizer] Loading data from {parquet_path}...")
+    print(f"[Visualizer] Reading {parquet_path}...")
     df = pl.read_parquet(parquet_path)
-    print(f"[Plotly Visualizer] Loaded {len(df):,} M1 bars.")
 
     engine = EventEngine(
         config=AccountConfig(initial_balance=10000.0, commission_per_lot_round_turn=7.0),
@@ -37,8 +35,6 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
         slippage_model=FixedSlippageModel(0.02)
     )
     strategy = XAUUSDTrendPullbackScalper(risk_reward_ratio=2.0, max_bars_hold=25)
-
-    print("[Plotly Visualizer] Running simulation...")
     res = engine.run_bars(df, strategy)
     perf = res["performance"]
     mc = res["monte_carlo"]
@@ -48,14 +44,20 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
     buys_count = sum(1 for t in trades if t.direction == OrderDirection.BUY)
     sells_count = sum(1 for t in trades if t.direction == OrderDirection.SELL)
 
-    # Extract OHLC arrays
-    timestamps = [dt.strftime("%Y-%m-%d %H:%M:%S") for dt in df["timestamp"].to_list()]
-    opens = df["open"].to_list()
-    highs = df["high"].to_list()
-    lows = df["low"].to_list()
-    closes = df["close"].to_list()
+    # Convert bars to JSON-friendly dicts
+    candles = []
+    for row in df.iter_rows(named=True):
+        dt = row["timestamp"]
+        candles.append({
+            "t": dt.strftime("%m-%d %H:%M"),
+            "ts": int(dt.timestamp()),
+            "o": round(row["open"], 2),
+            "h": round(row["high"], 2),
+            "l": round(row["low"], 2),
+            "c": round(row["close"], 2)
+        })
 
-    # Build trades data payload
+    # Convert trades to JSON-friendly dicts
     trade_list = []
     for i, t in enumerate(trades):
         is_buy = (t.direction == OrderDirection.BUY)
@@ -63,35 +65,41 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
         trade_list.append({
             "id": i + 1,
             "side": "BUY" if is_buy else "SELL",
-            "open_time": t.open_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "close_time": t.close_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "open_price": round(t.open_price, 2),
-            "close_price": round(t.close_price, 2),
+            "open_t": t.open_time.strftime("%m-%d %H:%M"),
+            "close_t": t.close_time.strftime("%m-%d %H:%M"),
+            "open_ts": int(t.open_time.timestamp()),
+            "close_ts": int(t.close_time.timestamp()),
+            "entry": round(t.open_price, 2),
+            "exit": round(t.close_price, 2),
             "sl": round(t.stop_loss, 2) if t.stop_loss else None,
             "tp": round(t.take_profit, 2) if t.take_profit else None,
-            "net_pnl": round(t.net_pnl, 2),
-            "is_win": is_win,
-            "exit_reason": t.exit_reason.value,
-            "duration_min": round(t.duration_seconds / 60.0, 1)
+            "pnl": round(t.net_pnl, 2),
+            "win": is_win,
+            "reason": t.exit_reason.value,
+            "dur": round(t.duration_seconds / 60.0, 1)
         })
 
-    # Equity curve arrays
-    eq_times = [eq["timestamp"].strftime("%Y-%m-%d %H:%M:%S") for eq in equity_curve]
-    eq_values = [round(eq["equity"], 2) for eq in equity_curve]
+    # Equity points
+    eq_pts = []
+    for eq in equity_curve:
+        eq_pts.append({
+            "ts": int(eq["timestamp"].timestamp()),
+            "val": round(eq["equity"], 2)
+        })
 
-    html_content = f"""<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>LLMTrading Institutional Visualizer</title>
-    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLMTrading Visualizer (Zero-Dependency Institutional)</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
-            background: #0e1117;
-            color: #e6edf3;
+            background: #0d1117;
+            color: #c9d1d9;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            overflow-x: hidden;
+            padding-bottom: 40px;
         }}
         header {{
             background: #161b22;
@@ -101,116 +109,109 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
             justify-content: space-between;
             align-items: center;
         }}
-        h1 {{ font-size: 1.25rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }}
-        .badge {{ background: #238636; color: #fff; font-size: 0.75rem; padding: 3px 8px; border-radius: 4px; }}
+        h1 {{ font-size: 1.2rem; font-weight: 600; display: flex; align-items: center; gap: 8px; color: #fff; }}
+        .badge {{ background: #238636; color: #fff; font-size: 0.72rem; padding: 3px 8px; border-radius: 4px; }}
         
         .stats-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 12px;
-            padding: 14px 24px;
-            background: #0e1117;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+            padding: 12px 24px;
+            background: #0d1117;
             border-bottom: 1px solid #21262d;
         }}
         .stat-card {{
             background: #161b22;
             border: 1px solid #30363d;
-            padding: 10px 14px;
+            padding: 10px 12px;
             border-radius: 6px;
         }}
-        .stat-label {{ font-size: 0.72rem; color: #8b949e; text-transform: uppercase; margin-bottom: 2px; }}
-        .stat-value {{ font-size: 1.2rem; font-weight: 700; }}
+        .stat-label {{ font-size: 0.7rem; color: #8b949e; text-transform: uppercase; margin-bottom: 2px; }}
+        .stat-value {{ font-size: 1.15rem; font-weight: 700; }}
         .val-green {{ color: #3fb950; }}
         .val-red {{ color: #f85149; }}
         .val-blue {{ color: #58a6ff; }}
 
-        #controls-bar {{
-            padding: 12px 24px;
+        #toolbar {{
+            padding: 10px 24px;
             background: #161b22;
             border-bottom: 1px solid #30363d;
             display: flex;
             align-items: center;
-            gap: 16px;
+            gap: 12px;
             flex-wrap: wrap;
         }}
         select, button {{
             background: #21262d;
             color: #c9d1d9;
             border: 1px solid #30363d;
-            padding: 7px 14px;
+            padding: 6px 12px;
             border-radius: 6px;
             font-size: 0.85rem;
             cursor: pointer;
-            font-weight: 500;
         }}
         select:focus, button:hover {{ border-color: #58a6ff; background: #30363d; }}
         
-        .legend-bar {{
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            font-size: 0.82rem;
-            margin-left: auto;
-        }}
-        .legend-item {{ display: flex; align-items: center; gap: 5px; }}
-        .line-sample {{ width: 18px; height: 2px; display: inline-block; }}
-        
-        #charts-wrapper {{
-            padding: 16px 24px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }}
         .chart-box {{
+            margin: 16px 24px 0 24px;
             background: #161b22;
             border: 1px solid #30363d;
             border-radius: 8px;
             overflow: hidden;
         }}
         .chart-header {{
-            background: #161b22;
-            padding: 10px 18px;
-            font-size: 0.85rem;
+            padding: 8px 16px;
+            font-size: 0.82rem;
             font-weight: 600;
             color: #8b949e;
             border-bottom: 1px solid #21262d;
             display: flex;
             justify-content: space-between;
         }}
-        #candle-plot {{ height: 550px; width: 100%; }}
-        #equity-plot {{ height: 220px; width: 100%; }}
+        canvas {{ display: block; width: 100%; cursor: crosshair; }}
         
-        .table-section {{
-            padding: 0 24px 32px 24px;
+        .table-box {{
+            margin: 16px 24px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+        .table-header {{
+            padding: 10px 16px;
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #fff;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }}
         .table-scroll {{
-            max-height: 400px;
+            max-height: 360px;
             overflow-y: auto;
-            border: 1px solid #30363d;
-            border-radius: 6px;
         }}
         table {{
             width: 100%;
             border-collapse: collapse;
-            background: #161b22;
             font-size: 0.82rem;
         }}
         th, td {{
-            padding: 9px 12px;
+            padding: 8px 12px;
             text-align: left;
             border-bottom: 1px solid #21262d;
         }}
         th {{ background: #21262d; color: #8b949e; position: sticky; top: 0; z-index: 2; font-weight: 600; }}
-        tr.trade-row {{ cursor: pointer; transition: background 0.15s; }}
-        tr.trade-row:hover {{ background: #1f2937; }}
+        tr.clickable-row {{ cursor: pointer; transition: background 0.15s; }}
+        tr.clickable-row:hover {{ background: #1f2937; }}
         tr.selected-row {{ background: #263342 !important; border-left: 4px solid #58a6ff; }}
     </style>
 </head>
 <body>
     <header>
-        <h1>LLMTrading Visualizer <span class="badge">Institutional Scalp</span></h1>
+        <h1>LLMTrading Visualizer <span class="badge">Standalone Native</span></h1>
         <div style="font-size:0.85rem; color:#8b949e;">
-            XAUUSD (M1) | Bars: <strong>{len(df):,}</strong> | Trades: <strong>{len(trades)} ({buys_count} BUY / {sells_count} SELL)</strong>
+            Asset: <strong style="color:#fff;">XAUUSD M1</strong> | Bars: <strong>{len(candles):,}</strong> | Trades: <strong>{len(trade_list)}</strong>
         </div>
     </header>
 
@@ -247,49 +248,42 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
         </div>
     </div>
 
-    <div id="controls-bar">
-        <label style="font-size:0.85rem; font-weight:600;">🔍 Jump to Trade:</label>
+    <div id="toolbar">
+        <label style="font-size:0.85rem; font-weight:600;">🔍 Select Trade to Zoom & Inspect:</label>
         <select id="trade-select" onchange="inspectTrade(this.value)">
-            <option value="">-- Choose a Trade to Zoom & Show Exact SL/TP Lines --</option>
+            <option value="">-- Choose a Trade --</option>
         </select>
         
-        <button onclick="zoomAllTrades()">View All Trades</button>
-        <button onclick="resetOverview()">Reset Full Chart</button>
+        <button onclick="prevTrade()">◀ Prev</button>
+        <button onclick="nextTrade()">Next ▶</button>
+        <button onclick="resetView()">Full Chart</button>
 
-        <div class="legend-bar">
-            <div class="legend-item"><span class="line-sample" style="background:#58a6ff; border-top: 1px dotted #58a6ff;"></span> Entry Level</div>
-            <div class="legend-item"><span class="line-sample" style="background:#3fb950; border-top: 2px dashed #3fb950;"></span> TP Target Level</div>
-            <div class="legend-item"><span class="line-sample" style="background:#f85149; border-top: 2px dashed #f85149;"></span> SL Stop Level</div>
+        <div style="margin-left:auto; display:flex; gap:16px; font-size:0.82rem;">
+            <span><strong style="color:#58a6ff;">---</strong> Entry</span>
+            <span><strong style="color:#3fb950;">---</strong> TP Target</span>
+            <span><strong style="color:#f85149;">---</strong> SL Stop</span>
         </div>
     </div>
 
-    <div id="charts-wrapper">
-        <div class="chart-box">
-            <div class="chart-header">
-                <span id="chart-status-title">XAUUSD M1 Candlestick Chart (Plotly Institutional Engine)</span>
-                <span id="inspect-label" style="color:#58a6ff; font-weight:500;">Select any trade to inspect</span>
-            </div>
-            <div id="candle-plot"></div>
+    <div class="chart-box">
+        <div class="chart-header">
+            <span>Price Action & Trade Execution (Drag to pan, Scroll to zoom)</span>
+            <span id="inspect-banner" style="color:#58a6ff; font-weight:600;">Showing initial 100 bars</span>
         </div>
-        <div class="chart-box">
-            <div class="chart-header">
-                <span>Equity Growth Curve ($10,000 Starting Balance)</span>
-            </div>
-            <div id="equity-plot"></div>
-        </div>
+        <canvas id="candle-canvas" height="520"></canvas>
     </div>
 
-    <div class="table-section">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h3 style="font-size:0.95rem; color:#fff;">All {len(trade_list)} Executed Trades (Click any row to jump to chart)</h3>
-            <span style="font-size:0.8rem; color:#8b949e;">Sorted chronologically</span>
+    <div class="table-box">
+        <div class="table-header">
+            <span>Complete Executed Trades Ledger ({len(trade_list)} Trades)</span>
+            <span style="font-size:0.75rem; color:#8b949e;">Click any row to jump directly on chart</span>
         </div>
         <div class="table-scroll">
             <table>
                 <thead>
                     <tr>
                         <th>#</th>
-                        <th>Side</th>
+                        <th>Type</th>
                         <th>Entry Time</th>
                         <th>Exit Time</th>
                         <th>Entry Price</th>
@@ -301,171 +295,296 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
                         <th>Duration</th>
                     </tr>
                 </thead>
-                <tbody id="table-body"></tbody>
+                <tbody id="trades-tbody"></tbody>
             </table>
         </div>
     </div>
 
     <script>
-        const timestamps = {json.dumps(timestamps)};
-        const opens = {json.dumps(opens)};
-        const highs = {json.dumps(highs)};
-        const lows = {json.dumps(lows)};
-        const closes = {json.dumps(closes)};
+        const candles = {json.dumps(candles)};
         const trades = {json.dumps(trade_list)};
-        const eqTimes = {json.dumps(eq_times)};
-        const eqValues = {json.dumps(eq_values)};
+        
+        // Map timestamps to bar index for O(1) lookup
+        const tsToIdx = new Map();
+        candles.forEach((c, idx) => tsToIdx.set(c.ts, idx));
 
-        // Build base candlestick trace
-        const candleTrace = {{
-            x: timestamps,
-            open: opens,
-            high: highs,
-            low: lows,
-            close: closes,
-            type: 'candlestick',
-            name: 'XAUUSD M1',
-            increasing: {{ line: {{ color: '#3fb950' }} }},
-            decreasing: {{ line: {{ color: '#f85149' }} }},
-            showlegend: false
-        }};
+        // Canvas & Viewport State
+        const canvas = document.getElementById('candle-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let startIdx = 0;
+        let viewCount = 80;
+        let selectedTradeId = null;
 
-        // Build Entry & Exit Scatter Markers
-        const buyEntries = trades.filter(t => t.side === 'BUY');
-        const sellEntries = trades.filter(t => t.side === 'SELL');
-        const winExits = trades.filter(t => t.is_win);
-        const lossExits = trades.filter(t => !t.is_win);
+        function resizeCanvas() {{
+            canvas.width = canvas.parentElement.clientWidth;
+            drawChart();
+        }}
+        window.addEventListener('resize', resizeCanvas);
 
-        const buyMarkerTrace = {{
-            x: buyEntries.map(t => t.open_time),
-            y: buyEntries.map(t => t.open_price),
-            mode: 'markers+text',
-            type: 'scatter',
-            name: 'BUY Entry',
-            text: buyEntries.map(t => '#' + t.id + ' BUY'),
-            textposition: 'bottom center',
-            textfont: {{ color: '#3fb950', size: 10 }},
-            marker: {{
-                symbol: 'triangle-up',
-                color: '#3fb950',
-                size: 13,
-                line: {{ color: '#ffffff', width: 1 }}
+        function drawChart() {{
+            const W = canvas.width;
+            const H = canvas.height;
+            ctx.clearRect(0, 0, W, H);
+
+            const endIdx = Math.min(candles.length, startIdx + viewCount);
+            const slice = candles.slice(startIdx, endIdx);
+            if (slice.length === 0) return;
+
+            // Find min/max price in view
+            let minP = Infinity;
+            let maxP = -Infinity;
+            for (let c of slice) {{
+                if (c.l < minP) minP = c.l;
+                if (c.h > maxP) maxP = c.h;
             }}
-        }};
 
-        const sellMarkerTrace = {{
-            x: sellEntries.map(t => t.open_time),
-            y: sellEntries.map(t => t.open_price),
-            mode: 'markers+text',
-            type: 'scatter',
-            name: 'SELL Entry',
-            text: sellEntries.map(t => '#' + t.id + ' SELL'),
-            textposition: 'top center',
-            textfont: {{ color: '#f85149', size: 10 }},
-            marker: {{
-                symbol: 'triangle-down',
-                color: '#f85149',
-                size: 13,
-                line: {{ color: '#ffffff', width: 1 }}
+            // If a trade is selected, expand minP/maxP to include its SL and TP
+            if (selectedTradeId !== null) {{
+                const tr = trades.find(t => t.id === selectedTradeId);
+                if (tr) {{
+                    if (tr.sl) {{ minP = Math.min(minP, tr.sl); maxP = Math.max(maxP, tr.sl); }}
+                    if (tr.tp) {{ minP = Math.min(minP, tr.tp); maxP = Math.max(maxP, tr.tp); }}
+                    minP = Math.min(minP, tr.entry);
+                    maxP = Math.max(maxP, tr.entry);
+                }}
             }}
-        }};
 
-        const winExitTrace = {{
-            x: winExits.map(t => t.close_time),
-            y: winExits.map(t => t.close_price),
-            mode: 'markers+text',
-            type: 'scatter',
-            name: 'Take Profit Exit',
-            text: winExits.map(t => '+$' + t.net_pnl.toFixed(0)),
-            textposition: 'top right',
-            textfont: {{ color: '#3fb950', size: 10 }},
-            marker: {{ symbol: 'circle', color: '#3fb950', size: 8 }}
-        }};
+            const pad = (maxP - minP) * 0.1 || 1.0;
+            minP -= pad;
+            maxP += pad;
 
-        const lossExitTrace = {{
-            x: lossExits.map(t => t.close_time),
-            y: lossExits.map(t => t.close_price),
-            mode: 'markers+text',
-            type: 'scatter',
-            name: 'Stop Loss Exit',
-            text: lossExits.map(t => '-$' + Math.abs(t.net_pnl).toFixed(0)),
-            textposition: 'bottom right',
-            textfont: {{ color: '#f85149', size: 10 }},
-            marker: {{ symbol: 'x', color: '#f85149', size: 8 }}
-        }};
+            const padLeft = 10;
+            const padRight = 75;
+            const padTop = 30;
+            const padBottom = 30;
+            const chartW = W - padLeft - padRight;
+            const chartH = H - padTop - padBottom;
 
-        const candleLayout = {{
-            dragmode: 'zoom',
-            margin: {{ r: 50, t: 25, b: 40, l: 60 }},
-            showlegend: true,
-            legend: {{ orientation: 'h', y: 1.05, x: 0, font: {{ color: '#8b949e', size: 11 }} }},
-            plot_bgcolor: '#161b22',
-            paper_bgcolor: '#161b22',
-            xaxis: {{
-                rangeslider: {{ visible: false }},
-                color: '#8b949e',
-                gridcolor: '#21262d'
-            }},
-            yaxis: {{
-                color: '#8b949e',
-                gridcolor: '#21262d',
-                autorange: true
+            function getY(p) {{
+                return padTop + (1.0 - (p - minP) / (maxP - minP)) * chartH;
             }}
-        }};
 
-        Plotly.newPlot('candle-plot', [candleTrace, buyMarkerTrace, sellMarkerTrace, winExitTrace, lossExitTrace], candleLayout, {{ responsive: true }});
+            const barW = Math.max(2, (chartW / slice.length) * 0.7);
+            const stepW = chartW / slice.length;
 
-        // Equity Plot
-        const eqTrace = {{
-            x: eqTimes,
-            y: eqValues,
-            type: 'scatter',
-            mode: 'lines',
-            fill: 'tozeroy',
-            line: {{ color: '#58a6ff', width: 2 }},
-            fillcolor: 'rgba(88, 166, 255, 0.15)',
-            name: 'Account Equity'
-        }};
-        const eqLayout = {{
-            margin: {{ r: 50, t: 15, b: 35, l: 60 }},
-            plot_bgcolor: '#161b22',
-            paper_bgcolor: '#161b22',
-            xaxis: {{ color: '#8b949e', gridcolor: '#21262d' }},
-            yaxis: {{ color: '#8b949e', gridcolor: '#21262d' }},
-            showlegend: false
-        }};
-        Plotly.newPlot('equity-plot', [eqTrace], eqLayout, {{ responsive: true }});
+            // 1. Draw Grid & Right Price Axis
+            ctx.strokeStyle = '#21262d';
+            ctx.lineWidth = 1;
+            ctx.fillStyle = '#8b949e';
+            ctx.font = '11px -apple-system, sans-serif';
+            ctx.textAlign = 'left';
 
-        // Populate Table & Dropdown
+            const priceStep = (maxP - minP) / 6;
+            for (let i = 0; i <= 6; i++) {{
+                const p = minP + i * priceStep;
+                const y = getY(p);
+                ctx.beginPath();
+                ctx.moveTo(padLeft, y);
+                ctx.lineTo(W - padRight, y);
+                ctx.stroke();
+                ctx.fillText('$' + p.toFixed(2), W - padRight + 6, y + 4);
+            }}
+
+            // 2. Draw Candlesticks
+            slice.forEach((c, i) => {{
+                const x = padLeft + (i + 0.5) * stepW;
+                const yO = getY(c.o);
+                const yC = getY(c.c);
+                const yH = getY(c.h);
+                const yL = getY(c.l);
+
+                const isGreen = (c.c >= c.o);
+                const col = isGreen ? '#3fb950' : '#f85149';
+
+                // Wick
+                ctx.strokeStyle = col;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x, yH);
+                ctx.lineTo(x, yL);
+                ctx.stroke();
+
+                // Body
+                ctx.fillStyle = col;
+                const top = Math.min(yO, yC);
+                const bodyH = Math.max(2, Math.abs(yC - yO));
+                ctx.fillRect(x - barW / 2, top, barW, bodyH);
+
+                // Timestamp label every 15 bars
+                if (i % 15 === 0) {{
+                    ctx.fillStyle = '#6e7681';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(c.t, x, H - 10);
+                }}
+            }});
+
+            // 3. Draw Trades in current view
+            const visibleStartTs = slice[0].ts;
+            const visibleEndTs = slice[slice.length - 1].ts;
+
+            trades.forEach(tr => {{
+                // Check if trade overlaps current view
+                if (tr.close_ts < visibleStartTs || tr.open_ts > visibleEndTs) return;
+
+                const openIdx = tsToIdx.get(tr.open_ts);
+                const closeIdx = tsToIdx.get(tr.close_ts);
+                if (openIdx === undefined) return;
+
+                const x1 = padLeft + (openIdx - startIdx + 0.5) * stepW;
+                const x2 = closeIdx !== undefined ? (padLeft + (closeIdx - startIdx + 0.5) * stepW) : (W - padRight);
+
+                const yEntry = getY(tr.entry);
+                const yExit = getY(tr.exit);
+                const isBuy = (tr.side === 'BUY');
+                const isSelected = (tr.id === selectedTradeId);
+
+                // --- Draw SL / TP Dashed Lines ---
+                if (isSelected || (slice.length <= 120)) {{
+                    // Shaded trade box
+                    ctx.fillStyle = tr.win ? 'rgba(63, 185, 80, 0.12)' : 'rgba(248, 81, 73, 0.12)';
+                    ctx.fillRect(x1, Math.min(yEntry, yExit), Math.max(8, x2 - x1), Math.abs(yExit - yEntry) || 4);
+
+                    // Entry Line (Blue Dotted)
+                    ctx.strokeStyle = '#58a6ff';
+                    ctx.setLineDash([3, 3]);
+                    ctx.lineWidth = isSelected ? 2 : 1;
+                    ctx.beginPath();
+                    ctx.moveTo(x1, yEntry);
+                    ctx.lineTo(x2, yEntry);
+                    ctx.stroke();
+
+                    // Take Profit Line (Green Dashed)
+                    if (tr.tp) {{
+                        const yTP = getY(tr.tp);
+                        ctx.strokeStyle = '#3fb950';
+                        ctx.setLineDash([5, 4]);
+                        ctx.lineWidth = isSelected ? 2.5 : 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, yTP);
+                        ctx.lineTo(x2, yTP);
+                        ctx.stroke();
+
+                        // Label
+                        ctx.fillStyle = '#3fb950';
+                        ctx.textAlign = 'left';
+                        ctx.fillText('TP $' + tr.tp.toFixed(2), x2 + 4, yTP + 4);
+                    }}
+
+                    // Stop Loss Line (Red Dashed)
+                    if (tr.sl) {{
+                        const ySL = getY(tr.sl);
+                        ctx.strokeStyle = '#f85149';
+                        ctx.setLineDash([5, 4]);
+                        ctx.lineWidth = isSelected ? 2.5 : 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, ySL);
+                        ctx.lineTo(x2, ySL);
+                        ctx.stroke();
+
+                        // Label
+                        ctx.fillStyle = '#f85149';
+                        ctx.textAlign = 'left';
+                        ctx.fillText('SL $' + tr.sl.toFixed(2), x2 + 4, ySL + 4);
+                    }}
+                    ctx.setLineDash([]); // Reset dash
+                }}
+
+                // --- Draw Entry Arrow directly at Entry Price ---
+                if (x1 >= padLeft && x1 <= W - padRight) {{
+                    ctx.fillStyle = isBuy ? '#3fb950' : '#f85149';
+                    ctx.beginPath();
+                    if (isBuy) {{
+                        // Triangle UP at Entry price
+                        ctx.moveTo(x1, yEntry);
+                        ctx.lineTo(x1 - 6, yEntry + 10);
+                        ctx.lineTo(x1 + 6, yEntry + 10);
+                    }} else {{
+                        // Triangle DOWN at Entry price
+                        ctx.moveTo(x1, yEntry);
+                        ctx.lineTo(x1 - 6, yEntry - 10);
+                        ctx.lineTo(x1 + 6, yEntry - 10);
+                    }}
+                    ctx.fill();
+
+                    // Entry Badge Text
+                    ctx.fillStyle = isBuy ? '#3fb950' : '#f85149';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`#${{tr.id}} ${{tr.side}}`, x1, isBuy ? (yEntry + 22) : (yEntry - 14));
+                }}
+
+                // --- Draw Exit Dot at Exit Price ---
+                if (closeIdx !== undefined && x2 >= padLeft && x2 <= W - padRight) {{
+                    ctx.fillStyle = tr.win ? '#3fb950' : '#f85149';
+                    ctx.beginPath();
+                    ctx.arc(x2, yExit, 4, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    const pnlStr = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(0);
+                    ctx.fillText(pnlStr, x2, tr.win ? (yExit - 8) : (yExit + 14));
+                }}
+            }});
+        }}
+
+        // Interactivity: Drag to Pan
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartIdx = 0;
+
+        canvas.addEventListener('mousedown', e => {{
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartIdx = startIdx;
+        }});
+        window.addEventListener('mouseup', () => isDragging = false);
+        window.addEventListener('mousemove', e => {{
+            if (!isDragging) return;
+            const dx = e.clientX - dragStartX;
+            const deltaBars = Math.round((dx / canvas.width) * viewCount);
+            startIdx = Math.max(0, Math.min(candles.length - viewCount, dragStartIdx - deltaBars));
+            drawChart();
+        }});
+
+        // Interactivity: Wheel to Zoom
+        canvas.addEventListener('wheel', e => {{
+            e.preventDefault();
+            const zoomIn = (e.deltaY < 0);
+            const delta = zoomIn ? -15 : 15;
+            const newCount = Math.max(20, Math.min(800, viewCount + delta));
+            startIdx = Math.max(0, Math.min(candles.length - newCount, startIdx + Math.round((viewCount - newCount) / 2)));
+            viewCount = newCount;
+            drawChart();
+        }}, {{ passive: false }});
+
+        // Trade Selection & Inspection
         const select = document.getElementById('trade-select');
-        const tbody = document.getElementById('table-body');
+        const tbody = document.getElementById('trades-tbody');
 
         trades.forEach(t => {{
-            // Add to dropdown
+            // Add option
             const opt = document.createElement('option');
             opt.value = t.id;
-            const pnlStr = (t.net_pnl > 0 ? '+' : '') + '$' + t.net_pnl.toFixed(2);
-            opt.textContent = `Trade #${{t.id}} [${{t.side}}] ${{t.open_time}} | Entry: ${{t.open_price}} | PnL: ${{pnlStr}} (${{t.exit_reason}})`;
+            const pnlStr = (t.win ? '+' : '') + '$' + t.pnl.toFixed(2);
+            opt.textContent = `Trade #${{t.id}} [${{t.side}}] ${{t.open_t}} | Entry: ${{t.entry}} | PnL: ${{pnlStr}} (${{t.reason}})`;
             select.appendChild(opt);
 
             // Add table row
             const tr = document.createElement('tr');
-            tr.id = 'trade-row-' + t.id;
-            tr.className = 'trade-row';
+            tr.id = 'row-' + t.id;
+            tr.className = 'clickable-row';
             tr.onclick = () => inspectTrade(t.id);
-
             tr.innerHTML = `
                 <td>${{t.id}}</td>
                 <td style="font-weight:700; color:${{t.side === 'BUY' ? '#3fb950' : '#f85149'}};">${{t.side}}</td>
-                <td>${{t.open_time}}</td>
-                <td>${{t.close_time}}</td>
-                <td>$${{t.open_price.toFixed(2)}}</td>
-                <td>$${{t.close_price.toFixed(2)}}</td>
+                <td>${{t.open_t}}</td>
+                <td>${{t.close_t}}</td>
+                <td>$${{t.entry.toFixed(2)}}</td>
+                <td>$${{t.exit.toFixed(2)}}</td>
                 <td style="color:#f85149; font-weight:600;">$${{t.sl ? t.sl.toFixed(2) : '-'}}</td>
                 <td style="color:#3fb950; font-weight:600;">$${{t.tp ? t.tp.toFixed(2) : '-'}}</td>
-                <td style="font-weight:700; color:${{t.is_win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</td>
-                <td>${{t.exit_reason}}</td>
-                <td>${{t.duration_min}}m</td>
+                <td style="font-weight:700; color:${{t.win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</td>
+                <td>${{t.reason}}</td>
+                <td>${{t.dur}}m</td>
             `;
             tbody.appendChild(tr);
         }});
@@ -473,154 +592,57 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
         function inspectTrade(tradeId) {{
             if (!tradeId) return;
             const id = parseInt(tradeId);
-            const trade = trades.find(t => t.id === id);
-            if (!trade) return;
+            const tr = trades.find(t => t.id === id);
+            if (!tr) return;
 
+            selectedTradeId = id;
             select.value = id;
 
-            // Highlight table row
-            document.querySelectorAll('.trade-row').forEach(r => r.classList.remove('selected-row'));
-            const row = document.getElementById('trade-row-' + id);
-            if (row) {{
-                row.classList.add('selected-row');
-                row.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+            // Highlight row
+            document.querySelectorAll('.clickable-row').forEach(r => r.classList.remove('selected-row'));
+            const r = document.getElementById('row-' + id);
+            if (r) {{
+                r.classList.add('selected-row');
+                r.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
             }}
 
-            // Draw Shapes: Dashed Horizontal Lines for Entry, TP, and SL
-            const shapes = [];
+            // Zoom directly into trade
+            const openIdx = tsToIdx.get(tr.open_ts) || 0;
+            const closeIdx = tsToIdx.get(tr.close_ts) || openIdx;
+            const durBars = Math.max(1, closeIdx - openIdx);
 
-            // 1. Entry Line (Blue Dotted)
-            shapes.push({{
-                type: 'line',
-                x0: trade.open_time,
-                y0: trade.open_price,
-                x1: trade.close_time,
-                y1: trade.open_price,
-                line: {{ color: '#58a6ff', width: 2, dash: 'dot' }}
-            }});
+            viewCount = Math.max(35, durBars + 25);
+            startIdx = Math.max(0, openIdx - 12);
 
-            // 2. Take Profit Line (Green Dashed)
-            if (trade.tp) {{
-                shapes.push({{
-                    type: 'line',
-                    x0: trade.open_time,
-                    y0: trade.tp,
-                    x1: trade.close_time,
-                    y1: trade.tp,
-                    line: {{ color: '#3fb950', width: 2, dash: 'dash' }}
-                }});
-            }}
+            const pnlStr = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(2);
+            document.getElementById('inspect-banner').innerHTML = 
+                `Inspecting <strong>Trade #${{tr.id}} (${{tr.side}})</strong>: Entry <strong>$${{tr.entry}}</strong> | SL: <strong style="color:#f85149;">$${{tr.sl}}</strong> | TP: <strong style="color:#3fb950;">$${{tr.tp}}</strong> | PnL: <strong style="color:${{tr.win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</strong> (${{tr.reason}})`;
 
-            // 3. Stop Loss Line (Red Dashed)
-            if (trade.sl) {{
-                shapes.push({{
-                    type: 'line',
-                    x0: trade.open_time,
-                    y0: trade.sl,
-                    x1: trade.close_time,
-                    y1: trade.sl,
-                    line: {{ color: '#f85149', width: 2, dash: 'dash' }}
-                }});
-            }}
-
-            // 4. Shaded Box connecting Entry to Exit
-            shapes.push({{
-                type: 'rect',
-                x0: trade.open_time,
-                y0: trade.open_price,
-                x1: trade.close_time,
-                y1: trade.close_price,
-                fillcolor: trade.is_win ? 'rgba(63, 185, 80, 0.18)' : 'rgba(248, 81, 73, 0.18)',
-                line: {{ width: 0 }}
-            }});
-
-            // Annotations to show exact labels on chart
-            const annotations = [
-                {{
-                    x: trade.open_time,
-                    y: trade.open_price,
-                    text: `Entry: $${{trade.open_price.toFixed(2)}}`,
-                    showarrow: true,
-                    arrowhead: 2,
-                    arrowcolor: '#58a6ff',
-                    font: {{ color: '#58a6ff', size: 11 }},
-                    bgcolor: '#161b22',
-                    bordercolor: '#58a6ff'
-                }},
-                {{
-                    x: trade.close_time,
-                    y: trade.close_price,
-                    text: `Exit: $${{trade.close_price.toFixed(2)}} (${{trade.exit_reason}})`,
-                    showarrow: true,
-                    arrowhead: 2,
-                    arrowcolor: trade.is_win ? '#3fb950' : '#f85149',
-                    font: {{ color: trade.is_win ? '#3fb950' : '#f85149', size: 11 }},
-                    bgcolor: '#161b22',
-                    bordercolor: trade.is_win ? '#3fb950' : '#f85149'
-                }}
-            ];
-
-            if (trade.tp) {{
-                annotations.push({{
-                    x: trade.close_time,
-                    y: trade.tp,
-                    text: `TP Target: $${{trade.tp.toFixed(2)}}`,
-                    showarrow: false,
-                    font: {{ color: '#3fb950', size: 10 }},
-                    bgcolor: '#161b22'
-                }});
-            }}
-            if (trade.sl) {{
-                annotations.push({{
-                    x: trade.close_time,
-                    y: trade.sl,
-                    text: `SL Stop: $${{trade.sl.toFixed(2)}}`,
-                    showarrow: false,
-                    font: {{ color: '#f85149', size: 10 }},
-                    bgcolor: '#161b22'
-                }});
-            }}
-
-            // Calculate zoom range (30 minutes before, 30 minutes after)
-            const openDate = new Date(trade.open_time);
-            const closeDate = new Date(trade.close_time);
-            const xMin = new Date(openDate.getTime() - 25 * 60 * 1000).toISOString().replace('T', ' ').substring(0, 19);
-            const xMax = new Date(closeDate.getTime() + 25 * 60 * 1000).toISOString().replace('T', ' ').substring(0, 19);
-
-            const yPrices = [trade.open_price, trade.close_price];
-            if (trade.sl) yPrices.push(trade.sl);
-            if (trade.tp) yPrices.push(trade.tp);
-            const yMin = Math.min(...yPrices) - 1.0;
-            const yMax = Math.max(...yPrices) + 1.0;
-
-            Plotly.relayout('candle-plot', {{
-                'xaxis.range': [xMin, xMax],
-                'yaxis.range': [yMin, yMax],
-                'yaxis.autorange': false,
-                'shapes': shapes,
-                'annotations': annotations
-            }});
-
-            const pnlStr = (trade.net_pnl > 0 ? '+' : '') + '$' + trade.net_pnl.toFixed(2);
-            document.getElementById('inspect-label').innerHTML = `Inspecting <strong>Trade #${{trade.id}} (${{trade.side}})</strong>: Entry <strong>$${{trade.open_price}}</strong> | SL: <strong style="color:#f85149;">$${{trade.sl}}</strong> | TP: <strong style="color:#3fb950;">$${{trade.tp}}</strong> | PnL: <strong style="color:${{trade.is_win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</strong>`;
+            drawChart();
         }}
 
-        function resetOverview() {{
-            Plotly.relayout('candle-plot', {{
-                'xaxis.autorange': true,
-                'yaxis.autorange': true,
-                'shapes': [],
-                'annotations': []
-            }});
-            document.getElementById('inspect-label').textContent = 'Full overview restored';
-            document.querySelectorAll('.trade-row').forEach(r => r.classList.remove('selected-row'));
+        function prevTrade() {{
+            const cur = selectedTradeId || 2;
+            if (cur > 1) inspectTrade(cur - 1);
+        }}
+        function nextTrade() {{
+            const cur = selectedTradeId || 0;
+            if (cur < trades.length) inspectTrade(cur + 1);
+        }}
+
+        function resetView() {{
+            selectedTradeId = null;
+            startIdx = 0;
+            viewCount = 100;
             select.value = '';
+            document.getElementById('inspect-banner').textContent = 'Full chart overview';
+            document.querySelectorAll('.clickable-row').forEach(r => r.classList.remove('selected-row'));
+            drawChart();
         }}
 
-        function zoomAllTrades() {{
-            // Show all trades with full range
-            resetOverview();
-        }}
+        // Initial setup
+        resizeCanvas();
+        inspectTrade(1); // Auto-inspect Trade #1 on startup!
     </script>
 </body>
 </html>
@@ -629,11 +651,11 @@ def generate_plotly_visual(output_file: str = "reports/backtest_visual.html"):
     out_path = Path(output_file)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
-        f.write(html_content)
+        f.write(html)
 
-    print(f"[Plotly Visualizer] SUCCESS! Generated at: {out_path.resolve()}")
+    print(f"[Visualizer] SUCCESS! Generated standalone visualizer at: {out_path.resolve()}")
     return str(out_path.resolve())
 
 
 if __name__ == "__main__":
-    generate_plotly_visual()
+    generate_standalone_visual()
