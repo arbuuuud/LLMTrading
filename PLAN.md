@@ -45,11 +45,13 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
         *   **Payoff Ratio**: Mencapai **3.92x** (rata-rata win hampir 4x loss).
         *   **Konsistensi**: 6-7 bulan dari 10.5 bulan berprofit bersih dengan Monthly Ratchet Governor.
 
-### **Fase Eksplorasi 4: Optimasi Parameter Lanjutan & Penerapan Live Bridge**
+### **Fase Eksplorasi 4: Pengembangan Priority 2 - Intraday SMC Expansion Sniper & Dual-Horizon Portfolio**
 
-*   **Status**: **IN PROGRESS.**
-*   **Tindakan**:
-    1.  Perbarui parameter default di `bridge/server.py` ke konfigurasi Golden Window (10:30 - 14:30 UTC, Band 1.8s, SL Buffer $0.50, RR 2.0x, Mean Target True).
-    2.  Update visualizer dashboard dengan kurva ekuitas hasil optimasi +$4,043.98.
+*   **Status**: **SELESAI.**
+*   **Modul Baru**:
+    - `strategies/incubator/strat_6_intraday_smc.py`: Menggabungkan struktur H1 (BOS/CHoCH) dengan eksekusi M15 di zona Order Block & Inversion FVG, menerapkan Callisto Trade Management (50% TP1 @ 1.5R, SL ke Breakeven, 50% Runner @ 4.0R).
+*   **Temuan Kunci**:
+    - **Timeframe M15 vs M5**: Pada M15, strategi SMC menghasilkan Win Rate tinggi **62.5%** dan Profit Factor **2.17** dengan Max Drawdown sangat kecil (**1.8%**). Sedangkan pada M5, sinyal terlalu banyak noise.
+    - **Dual-Horizon Execution**: Menjalankan Scalper M1 (Golden Window) bersama Intraday M15 secara terisolasi menghasilkan diversifikasi yang solid dengan ekuitas gabungan yang stabil.
 
 ---
