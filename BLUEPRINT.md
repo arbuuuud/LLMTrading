@@ -313,7 +313,7 @@ LLMTrading/
 - [x] **Fase 0**: Riset Metodologi (@patcha015) & Penyusunan Master Blueprint.
 - [x] **Fase 1**: MT5 Wine Data Exporter & High-Speed Parquet Pipeline (77.3M Ticks XAUUSD terindeks).
 - [x] **Fase 2**: Core Custom Backtest Engine (Event-Driven Tick/Bar, Intrabar SL/TP, Monte Carlo, Slippage/Commissions terverifikasi).
-- [ ] **Fase 3**: Modular Strategy Framework & Scalping Baseline (`XAUUSD_Liquidity_SMC_Scout`).
+- [x] **Fase 3**: Modular Strategy Framework & Scalping Baseline (`XAUUSD_Liquidity_SMC_Scout` & `XAUUSD_Trend_Pullback_Scalper` dengan Ablation Testing terverifikasi).
 - [ ] **Fase 4**: Multi-Agent Implementation (Regime Detector, Strategy Miner, Risk Gatekeeper).
 - [ ] **Fase 5**: Post-Mortem Feedback Loop & Knowledge Base Integration.
 - [ ] **Fase 6**: Live Bridge Execution (`LLM_Bridge_Executor.mq5` via ZeroMQ/IPC ke MT5).
