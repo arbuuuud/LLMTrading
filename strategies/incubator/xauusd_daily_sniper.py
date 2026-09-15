@@ -20,6 +20,7 @@ from engine.core.types import OrderDirection, ExitReason
 from engine.core.strategy_base import BaseStrategy
 from strategies.modules.context.trend_filter import TrendBiasFilter
 from strategies.modules.triggers.candlestick_patterns import CandlestickPatternDetector, PatternType
+from agents.market_regime.detector import MarketRegimeDetector, RegimeType, MarketRegimeReport
 from agents.risk_manager.daily_ratchet import DailyRatchetRiskGovernor, SizingApproval
 
 
@@ -30,16 +31,19 @@ class XAUUSDDailySniper(BaseStrategy):
         sl_buffer_dollars: float = 0.35,
         max_bars_hold: int = 25,
         base_risk_pct: float = 0.5,
-        greed_risk_pct: float = 0.25
+        greed_risk_pct: float = 0.25,
+        use_regime_filter: bool = True
     ):
         super().__init__("XAUUSD_Daily_Sniper")
         self.risk_reward_ratio = risk_reward_ratio
         self.sl_buffer = sl_buffer_dollars
         self.max_bars_hold = max_bars_hold
+        self.use_regime_filter = use_regime_filter
 
         # Institutional components
         self.trend_filter = TrendBiasFilter(ema_period=50)
         self.candle_detector = CandlestickPatternDetector()
+        self.regime_detector = MarketRegimeDetector(lookback_bars=40, atr_period=14)
         self.risk_governor = DailyRatchetRiskGovernor(
             base_risk_pct=base_risk_pct,
             greed_risk_pct=greed_risk_pct,
@@ -69,6 +73,7 @@ class XAUUSDDailySniper(BaseStrategy):
         # 1. Update indicators and daily governor state
         self.trend_filter.update(bar)
         candle = self.candle_detector.update(bar)
+        regime = self.regime_detector.update(bar)
         self.risk_governor.on_bar_tick(dt, self.engine.equity)
 
         self.history.append(bar)
@@ -85,6 +90,10 @@ class XAUUSDDailySniper(BaseStrategy):
             return
         else:
             self.bars_in_trade = 0
+
+        # Check Market Regime Filter: Only trade when regime confirms Trend Pullback!
+        if self.use_regime_filter and regime.recommended_strategy_family != "TREND_PULLBACK":
+            return
 
         # 3. Detect Fresh High-Conviction Supply & Demand Zones
         self._detect_fresh_sd_zones()

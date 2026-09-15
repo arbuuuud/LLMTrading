@@ -221,6 +221,8 @@ class EventEngine:
         )
 
         self.closed_trades.append(trade_record)
+        if hasattr(self, "current_strategy") and self.current_strategy is not None:
+            self.current_strategy.on_trade_closed(trade_record)
 
     def _update_positions_on_tick(self, bid: float, ask: float):
         unrealized_total = 0.0
@@ -332,6 +334,7 @@ class EventEngine:
         Columns required: timestamp, bid, ask, spread, flags
         """
         self.reset()
+        self.current_strategy = strategy
         strategy.set_engine(self)
         strategy.on_init()
 
@@ -386,6 +389,7 @@ class EventEngine:
         Columns required: timestamp, open, high, low, close, mean_spread
         """
         self.reset()
+        self.current_strategy = strategy
         strategy.set_engine(self)
         strategy.on_init()
 
