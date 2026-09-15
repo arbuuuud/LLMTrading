@@ -1,0 +1,42 @@
+primary_asset:
+  symbol: "XAUUSD"
+  description: "Gold vs US Dollar"
+  point_size: 0.01
+  contract_size: 100
+  base_currency: "USD"
+  trading_sessions:
+    asia:
+      start: "00:00"
+      end: "07:00"
+      timezone: "UTC"
+    london:
+      start: "07:00"
+      end: "13:00"
+      timezone: "UTC"
+    new_york:
+      start: "13:00"
+      end: "21:00"
+      timezone: "UTC"
+
+reference_assets:
+  - symbol: "XAGUSD"
+    description: "Silver vs US Dollar (Precious Metal Beta & GSR Divergence)"
+    point_size: 0.001
+    contract_size: 5000
+    relationship: "high_positive_correlation_beta_lead_lag"
+
+  - symbol: "DXY"
+    description: "US Dollar Index (Macro Liquidity & Inverted Currency Driver)"
+    relationship: "inverted_correlation_macro_filter"
+
+data_granularity:
+  scalping:
+    - "tick"
+    - "M1"
+  intraday:
+    - "M5"
+    - "M15"
+    - "H1"
+  swing:
+    - "H4"
+    - "D1"

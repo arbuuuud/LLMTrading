@@ -1,0 +1,29 @@
+# Institutional Risk Limits & Circuit Breakers (Gatekeeper Agent Configuration)
+
+account_defaults:
+  currency: "USD"
+  initial_capital: 10000.0
+
+per_trade_risk:
+  default_risk_pct: 0.5        # 0.5% max risk per trade for scalping
+  aggressive_risk_pct: 1.0     # 1.0% maximum allowed under high-confidence setup
+  minimum_risk_reward: 1.5     # Minimum 1:1.5 R:R expected value
+
+portfolio_limits:
+  max_open_trades_scalping: 2
+  max_open_trades_total: 4
+  max_daily_drawdown_pct: 2.0  # Daily hard stop (Circuit Breaker)
+  max_weekly_drawdown_pct: 5.0
+  max_total_drawdown_pct: 10.0 # Absolute strategy pause & re-audit
+
+execution_filters:
+  max_spread_pips_xauusd: 3.5  # Do not enter if spread > 35 cents ($0.35)
+  pre_news_freeze_minutes: 15  # Pause scalping 15m before High Impact News (NFP, CPI, FOMC)
+  post_news_freeze_minutes: 15 # Wait 15m post high impact news
+
+monte_carlo_validation:
+  min_simulations: 1000
+  confidence_interval: 0.95
+  max_allowable_simulated_dd: 20.0 # Strategy rejected if 95% worst case DD > 20%
+  min_profit_factor: 1.4
+  min_sharpe_ratio: 1.3
