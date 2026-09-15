@@ -64,23 +64,11 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
     sells_count = sum(1 for t in trades if t.direction == OrderDirection.SELL)
     print(f"[Visualizer] Simulation complete: {len(trades)} trades ({buys_count} BUY / {sells_count} SELL).")
 
-    # To keep HTML lightweight (< 2.5 MB) and rendering instant (60 fps),
-    # we sample/stream the bars during trading hours and active trade windows
-    print("[Visualizer] Preparing optimized bar stream for 60fps canvas rendering...")
-    
-    # Filter bars to trading sessions (06:00 - 18:00 UTC) across the dataset
-    df_trade_hours = df_all.filter(
-        (pl.col("timestamp").dt.hour() >= 6) & (pl.col("timestamp").dt.hour() <= 17)
-    )
-    
-    # If still large, take M5 resampled bars or step sample
-    if len(df_trade_hours) > max_display_bars:
-        step = max(1, len(df_trade_hours) // max_display_bars)
-        df_display = df_trade_hours.gather_every(step)
-    else:
-        df_display = df_trade_hours
-
-    print(f"[Visualizer] Display bars: {len(df_display):,} (sampled from {total_bars_count:,} total bars).")
+    # Load 100% continuous, seamless M5 bars (zero skipped minutes, zero gaps between open and prev close)
+    m5_path = "data/processed/bars/XAUUSD/M5/XAUUSD_M5.parquet"
+    print(f"[Visualizer] Loading seamless continuous M5 bars from {m5_path}...")
+    df_display = pl.read_parquet(m5_path)
+    print(f"[Visualizer] Display bars: {len(df_display):,} continuous M5 bars (covering all 10.5 months seamlessly).")
 
     candles = []
     for row in df_display.iter_rows(named=True):
@@ -288,9 +276,9 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
 </head>
 <body>
     <header>
-        <h1>LLMTrading Visualizer <span class="badge">60 FPS Native Canvas</span></h1>
+        <h1>LLMTrading Visualizer <span class="badge">Seamless 10.5-Month Canvas</span></h1>
         <div style="font-size:0.85rem; color:#8b949e;">
-            XAUUSD M1 | Total Dataset: <strong>{total_bars_count:,} bars (10.5 Months)</strong> | Trades: <strong>{len(trade_list)}</strong>
+            Asset: <strong style="color:#fff;">XAUUSD M5 (Continuous 24h Flow)</strong> | Bars: <strong>{len(candles):,}</strong> | Trades: <strong>{len(trade_list)}</strong>
         </div>
     </header>
 
@@ -406,8 +394,20 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
         const trades = {json.dumps(trade_list)};
         const eqData = {json.dumps(eq_pts)};
         
-        const tsToIdx = new Map();
-        candles.forEach((c, idx) => tsToIdx.set(c.ts, idx));
+        // Binary search for exact bar index
+        function findBarIndex(targetTs) {{
+            let low = 0, high = candles.length - 1;
+            while (low <= high) {{
+                let mid = (low + high) >> 1;
+                if (candles[mid].ts <= targetTs) {{
+                    if (mid === candles.length - 1 || candles[mid + 1].ts > targetTs) return mid;
+                    low = mid + 1;
+                }} else {{
+                    high = mid - 1;
+                }}
+            }}
+            return Math.max(0, Math.min(candles.length - 1, low));
+        }}
 
         // Canvas 1: Candlestick
         const canvas = document.getElementById('candle-canvas');
@@ -550,19 +550,9 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
 
                 if (tr.close_ts < visibleStartTs || tr.open_ts > visibleEndTs) return;
 
-                // Find closest bar index if not exact match
-                let openIdx = tsToIdx.get(tr.open_ts);
-                if (openIdx === undefined) {{
-                    for (let j = 0; j < slice.length; j++) {{
-                        if (slice[j].ts >= tr.open_ts) {{ openIdx = startIdx + j; break; }}
-                    }}
-                }}
-                let closeIdx = tsToIdx.get(tr.close_ts);
-                if (closeIdx === undefined) {{
-                    for (let j = 0; j < slice.length; j++) {{
-                        if (slice[j].ts >= tr.close_ts) {{ closeIdx = startIdx + j; break; }}
-                    }}
-                }}
+                // Find exact bar index using binary search
+                let openIdx = findBarIndex(tr.open_ts);
+                let closeIdx = findBarIndex(tr.close_ts);
 
                 if (openIdx === undefined) return;
 
@@ -952,12 +942,7 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
                 r.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
             }}
 
-            let openIdx = tsToIdx.get(tr.open_ts);
-            if (openIdx === undefined) {{
-                for (let j = 0; j < candles.length; j++) {{
-                    if (candles[j].ts >= tr.open_ts) {{ openIdx = j; break; }}
-                }}
-            }}
+            let openIdx = findBarIndex(tr.open_ts);
             openIdx = openIdx || 0;
 
             viewCount = 60;
