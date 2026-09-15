@@ -1,11 +1,13 @@
 """
 Ultra-Robust Standalone Pure SVG/Canvas Institutional Visualizer.
-100% Zero External Dependencies, Zero CDN, Zero Security Blocking in Safari/Chrome.
-Renders directly using standard HTML5 Canvas & DOM:
-- Interactive Candlestick Chart with 60fps pan and scroll wheel zoom.
-- Explicit dashed lines connecting Entry, Stop Loss, and Take Profit.
-- Trade Inspector with automatic zoom and price tag callouts.
-- Searchable, clickable trade list showing all BUY and SELL trades.
+Features:
+- EXACT DIAGONAL DASHED LINE from Entry coordinate (candle entry time & price)
+  directly to Exit coordinate (candle exit time & exit price: TP or SL)!
+- Green diagonal dashed line for Profitable trades (Take Profit).
+- Red diagonal dashed line for Loss trades (Stop Loss / Cut).
+- Exact dot and price badges at start of line (Entry) and end of line (Exit).
+- Interactive navigation: Next/Prev buttons, Dropdown, Clickable table row.
+- 100% Native HTML5 Canvas (Zero CDN, instant rendering).
 """
 
 import sys
@@ -44,7 +46,6 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
     buys_count = sum(1 for t in trades if t.direction == OrderDirection.BUY)
     sells_count = sum(1 for t in trades if t.direction == OrderDirection.SELL)
 
-    # Convert bars to JSON-friendly dicts
     candles = []
     for row in df.iter_rows(named=True):
         dt = row["timestamp"]
@@ -57,7 +58,6 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             "c": round(row["close"], 2)
         })
 
-    # Convert trades to JSON-friendly dicts
     trade_list = []
     for i, t in enumerate(trades):
         is_buy = (t.direction == OrderDirection.BUY)
@@ -79,20 +79,12 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             "dur": round(t.duration_seconds / 60.0, 1)
         })
 
-    # Equity points
-    eq_pts = []
-    for eq in equity_curve:
-        eq_pts.append({
-            "ts": int(eq["timestamp"].timestamp()),
-            "val": round(eq["equity"], 2)
-        })
-
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLMTrading Visualizer (Zero-Dependency Institutional)</title>
+    <title>LLMTrading Visualizer (Diagonal Trajectory)</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
@@ -160,8 +152,8 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             overflow: hidden;
         }}
         .chart-header {{
-            padding: 8px 16px;
-            font-size: 0.82rem;
+            padding: 10px 16px;
+            font-size: 0.85rem;
             font-weight: 600;
             color: #8b949e;
             border-bottom: 1px solid #21262d;
@@ -209,7 +201,7 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
 </head>
 <body>
     <header>
-        <h1>LLMTrading Visualizer <span class="badge">Standalone Native</span></h1>
+        <h1>LLMTrading Visualizer <span class="badge">Trade Trajectory View</span></h1>
         <div style="font-size:0.85rem; color:#8b949e;">
             Asset: <strong style="color:#fff;">XAUUSD M1</strong> | Bars: <strong>{len(candles):,}</strong> | Trades: <strong>{len(trade_list)}</strong>
         </div>
@@ -249,41 +241,40 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
     </div>
 
     <div id="toolbar">
-        <label style="font-size:0.85rem; font-weight:600;">🔍 Select Trade to Zoom & Inspect:</label>
+        <label style="font-size:0.85rem; font-weight:600;">🔍 Select Trade:</label>
         <select id="trade-select" onchange="inspectTrade(this.value)">
-            <option value="">-- Choose a Trade --</option>
+            <option value="">-- Select a Trade to Zoom & View Diagonal Trajectory --</option>
         </select>
         
-        <button onclick="prevTrade()">◀ Prev</button>
-        <button onclick="nextTrade()">Next ▶</button>
+        <button onclick="prevTrade()">◀ Prev Trade</button>
+        <button onclick="nextTrade()">Next Trade ▶</button>
         <button onclick="resetView()">Full Chart</button>
 
-        <div style="margin-left:auto; display:flex; gap:16px; font-size:0.82rem;">
-            <span><strong style="color:#58a6ff;">---</strong> Entry</span>
-            <span><strong style="color:#3fb950;">---</strong> TP Target</span>
-            <span><strong style="color:#f85149;">---</strong> SL Stop</span>
+        <div style="margin-left:auto; display:flex; gap:16px; font-size:0.82rem; align-items:center;">
+            <span><strong style="color:#3fb950; font-size:1.1rem;">- - - ↗</strong> Win Trade Line</span>
+            <span><strong style="color:#f85149; font-size:1.1rem;">- - - ↘</strong> Loss Trade Line</span>
         </div>
     </div>
 
     <div class="chart-box">
         <div class="chart-header">
-            <span>Price Action & Trade Execution (Drag to pan, Scroll to zoom)</span>
-            <span id="inspect-banner" style="color:#58a6ff; font-weight:600;">Showing initial 100 bars</span>
+            <span id="inspect-banner" style="color:#58a6ff; font-weight:600;">Trade Trajectory View</span>
+            <span style="font-size:0.75rem; color:#8b949e;">Drag mouse to pan • Scroll mouse to zoom</span>
         </div>
-        <canvas id="candle-canvas" height="520"></canvas>
+        <canvas id="candle-canvas" height="540"></canvas>
     </div>
 
     <div class="table-box">
         <div class="table-header">
-            <span>Complete Executed Trades Ledger ({len(trade_list)} Trades)</span>
-            <span style="font-size:0.75rem; color:#8b949e;">Click any row to jump directly on chart</span>
+            <span>All {len(trade_list)} Executed Trades (Click any row to jump directly)</span>
+            <span style="font-size:0.75rem; color:#8b949e;">Sorted chronologically</span>
         </div>
         <div class="table-scroll">
             <table>
                 <thead>
                     <tr>
                         <th>#</th>
-                        <th>Type</th>
+                        <th>Side</th>
                         <th>Entry Time</th>
                         <th>Exit Time</th>
                         <th>Entry Price</th>
@@ -304,17 +295,15 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
         const candles = {json.dumps(candles)};
         const trades = {json.dumps(trade_list)};
         
-        // Map timestamps to bar index for O(1) lookup
         const tsToIdx = new Map();
         candles.forEach((c, idx) => tsToIdx.set(c.ts, idx));
 
-        // Canvas & Viewport State
         const canvas = document.getElementById('candle-canvas');
         const ctx = canvas.getContext('2d');
         
         let startIdx = 0;
         let viewCount = 80;
-        let selectedTradeId = null;
+        let selectedTradeId = 1;
 
         function resizeCanvas() {{
             canvas.width = canvas.parentElement.clientWidth;
@@ -331,7 +320,7 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             const slice = candles.slice(startIdx, endIdx);
             if (slice.length === 0) return;
 
-            // Find min/max price in view
+            // Determine min/max price in view
             let minP = Infinity;
             let maxP = -Infinity;
             for (let c of slice) {{
@@ -339,24 +328,24 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
                 if (c.h > maxP) maxP = c.h;
             }}
 
-            // If a trade is selected, expand minP/maxP to include its SL and TP
+            // Expand bounds if trade is selected
             if (selectedTradeId !== null) {{
                 const tr = trades.find(t => t.id === selectedTradeId);
                 if (tr) {{
+                    minP = Math.min(minP, tr.entry, tr.exit);
+                    maxP = Math.max(maxP, tr.entry, tr.exit);
                     if (tr.sl) {{ minP = Math.min(minP, tr.sl); maxP = Math.max(maxP, tr.sl); }}
                     if (tr.tp) {{ minP = Math.min(minP, tr.tp); maxP = Math.max(maxP, tr.tp); }}
-                    minP = Math.min(minP, tr.entry);
-                    maxP = Math.max(maxP, tr.entry);
                 }}
             }}
 
-            const pad = (maxP - minP) * 0.1 || 1.0;
+            const pad = (maxP - minP) * 0.12 || 1.0;
             minP -= pad;
             maxP += pad;
 
             const padLeft = 10;
             const padRight = 75;
-            const padTop = 30;
+            const padTop = 35;
             const padBottom = 30;
             const chartW = W - padLeft - padRight;
             const chartH = H - padTop - padBottom;
@@ -368,7 +357,7 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             const barW = Math.max(2, (chartW / slice.length) * 0.7);
             const stepW = chartW / slice.length;
 
-            // 1. Draw Grid & Right Price Axis
+            // 1. Draw Grid Lines & Right Price Axis
             ctx.strokeStyle = '#21262d';
             ctx.lineWidth = 1;
             ctx.fillStyle = '#8b949e';
@@ -419,12 +408,11 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
                 }}
             }});
 
-            // 3. Draw Trades in current view
+            // 3. Draw Trades Trajectory (DIAGONAL DASHED LINES from Entry -> Exit)
             const visibleStartTs = slice[0].ts;
             const visibleEndTs = slice[slice.length - 1].ts;
 
             trades.forEach(tr => {{
-                // Check if trade overlaps current view
                 if (tr.close_ts < visibleStartTs || tr.open_ts > visibleEndTs) return;
 
                 const openIdx = tsToIdx.get(tr.open_ts);
@@ -434,94 +422,51 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
                 const x1 = padLeft + (openIdx - startIdx + 0.5) * stepW;
                 const x2 = closeIdx !== undefined ? (padLeft + (closeIdx - startIdx + 0.5) * stepW) : (W - padRight);
 
-                const yEntry = getY(tr.entry);
-                const yExit = getY(tr.exit);
-                const isBuy = (tr.side === 'BUY');
+                const y1 = getY(tr.entry);
+                const y2 = getY(tr.exit);
+
                 const isSelected = (tr.id === selectedTradeId);
+                const lineColor = tr.win ? '#3fb950' : '#f85149';
 
-                // --- Draw SL / TP Dashed Lines ---
-                if (isSelected || (slice.length <= 120)) {{
-                    // Shaded trade box
-                    ctx.fillStyle = tr.win ? 'rgba(63, 185, 80, 0.12)' : 'rgba(248, 81, 73, 0.12)';
-                    ctx.fillRect(x1, Math.min(yEntry, yExit), Math.max(8, x2 - x1), Math.abs(yExit - yEntry) || 4);
-
-                    // Entry Line (Blue Dotted)
-                    ctx.strokeStyle = '#58a6ff';
-                    ctx.setLineDash([3, 3]);
-                    ctx.lineWidth = isSelected ? 2 : 1;
+                // Only draw if selected or reasonably zoomed in
+                if (isSelected || slice.length <= 150) {{
+                    // === DIAGONAL DASHED LINE FROM ENTRY DIRECTLY TO EXIT (TP/SL) ===
+                    ctx.strokeStyle = lineColor;
+                    ctx.setLineDash([5, 4]); // DASHED STYLE
+                    ctx.lineWidth = isSelected ? 3 : 1.5;
                     ctx.beginPath();
-                    ctx.moveTo(x1, yEntry);
-                    ctx.lineTo(x2, yEntry);
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
                     ctx.stroke();
-
-                    // Take Profit Line (Green Dashed)
-                    if (tr.tp) {{
-                        const yTP = getY(tr.tp);
-                        ctx.strokeStyle = '#3fb950';
-                        ctx.setLineDash([5, 4]);
-                        ctx.lineWidth = isSelected ? 2.5 : 1.5;
-                        ctx.beginPath();
-                        ctx.moveTo(x1, yTP);
-                        ctx.lineTo(x2, yTP);
-                        ctx.stroke();
-
-                        // Label
-                        ctx.fillStyle = '#3fb950';
-                        ctx.textAlign = 'left';
-                        ctx.fillText('TP $' + tr.tp.toFixed(2), x2 + 4, yTP + 4);
-                    }}
-
-                    // Stop Loss Line (Red Dashed)
-                    if (tr.sl) {{
-                        const ySL = getY(tr.sl);
-                        ctx.strokeStyle = '#f85149';
-                        ctx.setLineDash([5, 4]);
-                        ctx.lineWidth = isSelected ? 2.5 : 1.5;
-                        ctx.beginPath();
-                        ctx.moveTo(x1, ySL);
-                        ctx.lineTo(x2, ySL);
-                        ctx.stroke();
-
-                        // Label
-                        ctx.fillStyle = '#f85149';
-                        ctx.textAlign = 'left';
-                        ctx.fillText('SL $' + tr.sl.toFixed(2), x2 + 4, ySL + 4);
-                    }}
                     ctx.setLineDash([]); // Reset dash
-                }}
 
-                // --- Draw Entry Arrow directly at Entry Price ---
-                if (x1 >= padLeft && x1 <= W - padRight) {{
-                    ctx.fillStyle = isBuy ? '#3fb950' : '#f85149';
+                    // === ENTRY CIRCLE DOT AT EXACT ENTRY PRICE ===
+                    ctx.fillStyle = '#58a6ff';
                     ctx.beginPath();
-                    if (isBuy) {{
-                        // Triangle UP at Entry price
-                        ctx.moveTo(x1, yEntry);
-                        ctx.lineTo(x1 - 6, yEntry + 10);
-                        ctx.lineTo(x1 + 6, yEntry + 10);
-                    }} else {{
-                        // Triangle DOWN at Entry price
-                        ctx.moveTo(x1, yEntry);
-                        ctx.lineTo(x1 - 6, yEntry - 10);
-                        ctx.lineTo(x1 + 6, yEntry - 10);
+                    ctx.arc(x1, y1, isSelected ? 5 : 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // === EXIT CIRCLE DOT AT EXACT EXIT PRICE (TP / SL) ===
+                    ctx.fillStyle = lineColor;
+                    ctx.beginPath();
+                    ctx.arc(x2, y2, isSelected ? 6 : 4, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // === TEXT LABELS (Badges) ===
+                    if (isSelected) {{
+                        ctx.font = 'bold 11px -apple-system, sans-serif';
+                        
+                        // Entry Badge
+                        ctx.fillStyle = '#58a6ff';
+                        ctx.textAlign = (x1 < x2) ? 'right' : 'center';
+                        ctx.fillText(`Entry #${{tr.id}} (${{tr.side}}) $${{tr.entry.toFixed(2)}}`, x1 - 8, y1 - 6);
+
+                        // Exit Badge
+                        ctx.fillStyle = lineColor;
+                        ctx.textAlign = 'left';
+                        const pnlStr = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(2);
+                        ctx.fillText(`Exit: $${{tr.exit.toFixed(2)}} [${{pnlStr}}] (${{tr.reason}})`, x2 + 8, y2 + 4);
                     }}
-                    ctx.fill();
-
-                    // Entry Badge Text
-                    ctx.fillStyle = isBuy ? '#3fb950' : '#f85149';
-                    ctx.textAlign = 'center';
-                    ctx.fillText(`#${{tr.id}} ${{tr.side}}`, x1, isBuy ? (yEntry + 22) : (yEntry - 14));
-                }}
-
-                // --- Draw Exit Dot at Exit Price ---
-                if (closeIdx !== undefined && x2 >= padLeft && x2 <= W - padRight) {{
-                    ctx.fillStyle = tr.win ? '#3fb950' : '#f85149';
-                    ctx.beginPath();
-                    ctx.arc(x2, yExit, 4, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    const pnlStr = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(0);
-                    ctx.fillText(pnlStr, x2, tr.win ? (yExit - 8) : (yExit + 14));
                 }}
             }});
         }}
@@ -565,7 +510,7 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             const opt = document.createElement('option');
             opt.value = t.id;
             const pnlStr = (t.win ? '+' : '') + '$' + t.pnl.toFixed(2);
-            opt.textContent = `Trade #${{t.id}} [${{t.side}}] ${{t.open_t}} | Entry: ${{t.entry}} | PnL: ${{pnlStr}} (${{t.reason}})`;
+            opt.textContent = `Trade #${{t.id}} [${{t.side}}] ${{t.open_t}} -> Entry: ${{t.entry}} | Exit: ${{t.exit}} | PnL: ${{pnlStr}} (${{t.reason}})`;
             select.appendChild(opt);
 
             // Add table row
@@ -598,7 +543,7 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             selectedTradeId = id;
             select.value = id;
 
-            // Highlight row
+            // Highlight table row
             document.querySelectorAll('.clickable-row').forEach(r => r.classList.remove('selected-row'));
             const r = document.getElementById('row-' + id);
             if (r) {{
@@ -606,17 +551,17 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
                 r.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
             }}
 
-            // Zoom directly into trade
+            // Zoom view directly onto trade trajectory
             const openIdx = tsToIdx.get(tr.open_ts) || 0;
             const closeIdx = tsToIdx.get(tr.close_ts) || openIdx;
             const durBars = Math.max(1, closeIdx - openIdx);
 
-            viewCount = Math.max(35, durBars + 25);
-            startIdx = Math.max(0, openIdx - 12);
+            viewCount = Math.max(30, durBars + 20);
+            startIdx = Math.max(0, openIdx - 8);
 
             const pnlStr = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(2);
             document.getElementById('inspect-banner').innerHTML = 
-                `Inspecting <strong>Trade #${{tr.id}} (${{tr.side}})</strong>: Entry <strong>$${{tr.entry}}</strong> | SL: <strong style="color:#f85149;">$${{tr.sl}}</strong> | TP: <strong style="color:#3fb950;">$${{tr.tp}}</strong> | PnL: <strong style="color:${{tr.win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</strong> (${{tr.reason}})`;
+                `Inspecting <strong>Trade #${{tr.id}} (${{tr.side}})</strong>: Entry <strong>$${{tr.entry}}</strong> -> Exit <strong>$${{tr.exit}}</strong> | PnL: <strong style="color:${{tr.win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</strong> (${{tr.reason}}) | Duration: ${{tr.dur}} min`;
 
             drawChart();
         }}
@@ -640,9 +585,9 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
             drawChart();
         }}
 
-        // Initial setup
+        // Initialize view focused on Trade #1
         resizeCanvas();
-        inspectTrade(1); // Auto-inspect Trade #1 on startup!
+        inspectTrade(1);
     </script>
 </body>
 </html>
@@ -653,7 +598,7 @@ def generate_standalone_visual(output_file: str = "reports/backtest_visual.html"
     with open(out_path, "w") as f:
         f.write(html)
 
-    print(f"[Visualizer] SUCCESS! Generated standalone visualizer at: {out_path.resolve()}")
+    print(f"[Visualizer] SUCCESS! Generated at: {out_path.resolve()}")
     return str(out_path.resolve())
 
 
