@@ -28,7 +28,7 @@ from engine.core.event_engine import EventEngine
 from engine.core.types import AccountConfig, OrderDirection, ExitReason
 from engine.execution.commission import CommissionModel
 from engine.execution.slippage import FixedSlippageModel
-from strategies.incubator.xauusd_daily_sniper import XAUUSDDailySniper
+from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 
 
 def generate_optimized_visual(output_file: str = "reports/backtest_visual.html", max_display_bars: int = 25000):
@@ -38,13 +38,20 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html",
     total_bars_count = len(df_all)
     print(f"[Visualizer] Total available bars: {total_bars_count:,}.")
 
-    # Run the Institutional Sniper Strategy across the full dataset
+    # Run the Winning Strategy: Session Anchored VWAP 1.8 Sigma Mean Reversion
     engine = EventEngine(
         config=AccountConfig(initial_balance=10000.0, commission_per_lot_round_turn=7.0),
         commission_model=CommissionModel(7.0),
         slippage_model=FixedSlippageModel(0.02)
     )
-    strategy = XAUUSDDailySniper(risk_reward_ratio=1.8, sl_buffer_dollars=0.35, max_bars_hold=25, base_risk_pct=0.5, greed_risk_pct=0.25)
+    strategy = SessionAnchoredVWAPStrategy(
+        band_multiplier=1.8,
+        sl_buffer_dollars=0.40,
+        risk_reward_ratio=2.0,
+        base_risk_pct=0.5,
+        greed_risk_pct=0.25,
+        max_bars_hold=60
+    )
     
     print("[Visualizer] Running simulation...")
     res = engine.run_bars(df_all, strategy)
