@@ -5,40 +5,46 @@
 //+------------------------------------------------------------------+
 #property copyright   "LLMTrading Core"
 #property link        "https://github.com/alami/LLMTrading"
-#property version     "1.00"
-#property description "Native MQL5 Visual Strategy Tester running the Institutional Scalper"
+#property version     "2.00"
+#property description "Upgraded High-Conviction Institutional Scalper for MT5 Strategy Tester"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 #include <Trade\AccountInfo.mqh>
 
 //--- INPUT PARAMETERS
-input group "Strategy Settings"
-input double   InpLots           = 0.10;         // Fixed Lot Size (or test sizing)
+input group "=== Risk & Money Management ==="
+input double   InpLots           = 0.10;         // Fixed Lot Size
 input double   InpRiskReward     = 2.0;          // Risk-to-Reward Ratio (1:2.0)
-input double   InpSLBuffer       = 0.35;         // Stop Loss Buffer ($)
-input int      InpMaxBarsHold    = 25;           // Max M1 Bars in Trade (Time Exit)
-input int      InpEMAPeriod      = 50;           // Trend EMA Period (M15)
+input double   InpSLBuffer       = 0.35;         // Stop Loss Buffer beyond wick ($)
+input int      InpMaxBarsHold    = 25;           // Max M1 Bars in Trade (Time-based Exit)
 
-input group "Session Filter Settings"
-input bool     InpUseSessionFilter = true;       // Enable Session Prime Hours
-input int      InpLondonStartHour= 7;            // London Session Start Hour (Broker Time)
-input int      InpLondonEndHour  = 11;           // London Session End Hour
-input int      InpNYStartHour    = 13;           // NY Session Start Hour
-input int      InpNYEndHour      = 17;           // NY Session End Hour
+input group "=== Institutional Footprint (RBR / DBD) ==="
+input double   InpMinImpulseRatio= 1.5;          // Min Impulse vs Base Body Ratio (1.5x)
+input double   InpMinVolumeRatio = 1.2;          // Min Volume Expansion Ratio (1.2x)
+input int      InpEMAPeriod      = 50;           // Trend Filter EMA (M15)
+input bool     InpRequireEMASlope= true;         // Require EMA Slope Alignment
 
-input group "Visual & Safety Settings"
-input bool     InpDrawZones      = true;         // Draw Supply/Demand Rectangles
-input double   InpMaxSpread      = 0.25;         // Max Spread Allowed ($)
+input group "=== Session Filter (Broker Server Time) ==="
+input bool     InpUseSessionFilter = true;       // Enable Prime Hours Filter
+input int      InpLondonStartHour= 10;           // London Open Start Hour (Broker Time, e.g. 10 for UTC+3)
+input int      InpLondonEndHour  = 13;           // London Open End Hour
+input int      InpNYStartHour    = 15;           // New York Open Start Hour (e.g. 15 for UTC+3)
+input int      InpNYEndHour      = 18;           // New York Open End Hour
+
+input group "=== Visual & Safety Settings ==="
+input bool     InpDrawZones      = true;         // Draw Supply/Demand Rectangles on Chart
+input double   InpMaxSpread      = 0.25;         // Max Allowed Spread ($0.25)
 input ulong    InpMagicNumber    = 999002;       // Magic Number
 
 //--- STRUCTS
 struct SDZone {
-   bool   isDemand;     // True = Demand (RBR), False = Supply (DBD)
-   double high;
-   double low;
+   bool     isDemand;    // True = Demand (RBR), False = Supply (DBD)
+   double   high;
+   double   low;
    datetime time;
-   string name;
+   string   name;
+   bool     mitigated;
 };
 
 //--- GLOBALS
@@ -68,8 +74,8 @@ int OnInit()
    }
 
    ArrayResize(m_zones, 0);
-   PrintFormat("[Visual Tester] Initialized for %s on M1. R:R 1:%.1f | Max Hold: %d bars.",
-               _Symbol, InpRiskReward, InpMaxBarsHold);
+   PrintFormat("[Visual Tester v2.0] Initialized for %s. R:R 1:%.1f | London: %02d-%02d | NY: %02d-%02d",
+               _Symbol, InpRiskReward, InpLondonStartHour, InpLondonEndHour, InpNYStartHour, InpNYEndHour);
    return(INIT_SUCCEEDED);
 }
 
@@ -81,12 +87,11 @@ void OnDeinit(const int reason)
    if(m_handleEMA != INVALID_HANDLE)
       IndicatorRelease(m_handleEMA);
 
-   // Clear visual chart objects
    ObjectsDeleteAll(0, "SD_Zone_");
 }
 
 //+------------------------------------------------------------------+
-//| Check if Time is in Prime Trading Hours                          |
+//| Check Prime Session Hours                                        |
 //+------------------------------------------------------------------+
 bool IsInTradeSession(datetime dt)
 {
@@ -102,7 +107,7 @@ bool IsInTradeSession(datetime dt)
 }
 
 //+------------------------------------------------------------------+
-//| Draw Visual Supply/Demand Zone Box on Chart                      |
+//| Draw Visual Supply/Demand Box                                    |
 //+------------------------------------------------------------------+
 void DrawZoneOnChart(const SDZone &zone)
 {
@@ -111,36 +116,43 @@ void DrawZoneOnChart(const SDZone &zone)
    string name = zone.name;
    ObjectDelete(0, name);
 
-   datetime time2 = zone.time + 3600 * 4; // Extend box 4 hours forward
+   datetime time2 = zone.time + 3600 * 3; // 3 hours forward
    ObjectCreate(0, name, OBJ_RECTANGLE, 0, zone.time, zone.high, time2, zone.low);
-   ObjectSetInteger(0, name, OBJPROP_COLOR, zone.isDemand ? clrPaleGreen : clrLightPink);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, zone.isDemand ? clrMediumSeaGreen : clrCrimson);
    ObjectSetInteger(0, name, OBJPROP_FILL, true);
    ObjectSetInteger(0, name, OBJPROP_BACK, true);
 }
 
 //+------------------------------------------------------------------+
-//| Detect RBR (Demand) & DBD (Supply) Formations                    |
+//| Detect High-Conviction Institutional Supply & Demand Zones       |
 //+------------------------------------------------------------------+
 void DetectSupplyDemand(const MqlRates &rates[], int total_bars)
 {
-   if(total_bars < 6) return;
+   if(total_bars < 8) return;
 
-   // Index 1 is the most recently completed candle
-   // Index 2 is Base candle
-   // Index 3 is Leg 1
+   // Index 1: Displacement Candle (Leg 2)
+   // Index 2: Base Consolidation Candle
+   // Index 3: Origin Candle (Leg 1)
    double leg2_body = MathAbs(rates[1].close - rates[1].open);
+   double leg2_range= rates[1].high - rates[1].low;
    double base_body = MathAbs(rates[2].close - rates[2].open);
 
-   // Average volume
+   if(base_body <= 0.05 || leg2_range <= 0.20) return;
+
+   // Volume baseline (15 bars average)
    long sum_vol = 0;
    for(int i = 1; i <= 15 && i < total_bars; i++)
       sum_vol += rates[i].tick_volume;
    long avg_vol = sum_vol / 15;
 
-   // Check DBD (Supply Zone)
+   // Check High-Conviction DBD (Drop - Base - Drop) Supply Zone
    if(rates[1].close < rates[1].open && rates[3].close < rates[3].open)
    {
-      if(base_body > 0 && leg2_body > base_body * 1.3 && rates[1].tick_volume > avg_vol * 1.05)
+      bool strong_body = (leg2_body / leg2_range) >= 0.60;
+      bool impulse_ok  = leg2_body >= base_body * InpMinImpulseRatio;
+      bool volume_ok   = rates[1].tick_volume >= avg_vol * InpMinVolumeRatio;
+
+      if(strong_body && impulse_ok && volume_ok)
       {
          SDZone z;
          z.isDemand = false;
@@ -148,6 +160,7 @@ void DetectSupplyDemand(const MqlRates &rates[], int total_bars)
          z.low = rates[2].low;
          z.time = rates[2].time;
          z.name = StringFormat("SD_Zone_Supply_%d", ++m_zone_counter);
+         z.mitigated = false;
 
          int sz = ArraySize(m_zones);
          ArrayResize(m_zones, sz + 1);
@@ -155,10 +168,14 @@ void DetectSupplyDemand(const MqlRates &rates[], int total_bars)
          DrawZoneOnChart(z);
       }
    }
-   // Check RBR (Demand Zone)
+   // Check High-Conviction RBR (Rally - Base - Rally) Demand Zone
    else if(rates[1].close > rates[1].open && rates[3].close > rates[3].open)
    {
-      if(base_body > 0 && leg2_body > base_body * 1.3 && rates[1].tick_volume > avg_vol * 1.05)
+      bool strong_body = (leg2_body / leg2_range) >= 0.60;
+      bool impulse_ok  = leg2_body >= base_body * InpMinImpulseRatio;
+      bool volume_ok   = rates[1].tick_volume >= avg_vol * InpMinVolumeRatio;
+
+      if(strong_body && impulse_ok && volume_ok)
       {
          SDZone z;
          z.isDemand = true;
@@ -166,6 +183,7 @@ void DetectSupplyDemand(const MqlRates &rates[], int total_bars)
          z.low = rates[2].low;
          z.time = rates[2].time;
          z.name = StringFormat("SD_Zone_Demand_%d", ++m_zone_counter);
+         z.mitigated = false;
 
          int sz = ArraySize(m_zones);
          ArrayResize(m_zones, sz + 1);
@@ -174,8 +192,8 @@ void DetectSupplyDemand(const MqlRates &rates[], int total_bars)
       }
    }
 
-   // Keep zones list bounded
-   if(ArraySize(m_zones) > 25)
+   // Maintain active zones bounded
+   if(ArraySize(m_zones) > 20)
    {
       ObjectDelete(0, m_zones[0].name);
       ArrayRemove(m_zones, 0, 1);
@@ -183,47 +201,59 @@ void DetectSupplyDemand(const MqlRates &rates[], int total_bars)
 }
 
 //+------------------------------------------------------------------+
-//| Check if Price is inside active Demand Zone                      |
+//| Check Unmitigated Demand Zone                                    |
 //+------------------------------------------------------------------+
-bool IsInDemandZone(double price)
+bool IsInDemandZone(double price, int &zone_idx)
 {
    for(int i = ArraySize(m_zones) - 1; i >= 0; i--)
    {
-      if(m_zones[i].isDemand && price >= m_zones[i].low - 0.10 && price <= m_zones[i].high)
-         return true;
+      if(m_zones[i].isDemand && !m_zones[i].mitigated)
+      {
+         if(price >= m_zones[i].low - 0.15 && price <= m_zones[i].high + 0.05)
+         {
+            zone_idx = i;
+            return true;
+         }
+      }
    }
    return false;
 }
 
 //+------------------------------------------------------------------+
-//| Check if Price is inside active Supply Zone                      |
+//| Check Unmitigated Supply Zone                                    |
 //+------------------------------------------------------------------+
-bool IsInSupplyZone(double price)
+bool IsInSupplyZone(double price, int &zone_idx)
 {
    for(int i = ArraySize(m_zones) - 1; i >= 0; i--)
    {
-      if(!m_zones[i].isDemand && price <= m_zones[i].high + 0.10 && price >= m_zones[i].low)
-         return true;
+      if(!m_zones[i].isDemand && !m_zones[i].mitigated)
+      {
+         if(price <= m_zones[i].high + 0.15 && price >= m_zones[i].low - 0.05)
+         {
+            zone_idx = i;
+            return true;
+         }
+      }
    }
    return false;
 }
 
 //+------------------------------------------------------------------+
-//| Check Candlestick Rejection Patterns                             |
+//| Candlestick Triggers                                             |
 //+------------------------------------------------------------------+
 bool IsBullishTrigger(const MqlRates &c, const MqlRates &p)
 {
    double rng = c.high - c.low;
-   if(rng < 0.10) return false;
+   if(rng < 0.15) return false;
    double body = MathAbs(c.close - c.open);
    double lower_wick = MathMin(c.open, c.close) - c.low;
 
-   // 1. Hammer (Lower wick rejection)
+   // Hammer (Strong Lower Wick Rejection)
    if((lower_wick / rng) >= 0.55 && (body / rng) <= 0.35)
       return true;
 
-   // 2. Bullish Engulfing
-   if(p.close < p.open && c.close > c.open && c.close >= p.open && c.open <= p.close)
+   // Bullish Engulfing
+   if(p.close < p.open && c.close > c.open && c.close >= p.open && c.open <= p.close + 0.05)
       return true;
 
    return false;
@@ -232,23 +262,23 @@ bool IsBullishTrigger(const MqlRates &c, const MqlRates &p)
 bool IsBearishTrigger(const MqlRates &c, const MqlRates &p)
 {
    double rng = c.high - c.low;
-   if(rng < 0.10) return false;
+   if(rng < 0.15) return false;
    double body = MathAbs(c.close - c.open);
    double upper_wick = c.high - MathMax(c.open, c.close);
 
-   // 1. Shooting star (Upper wick rejection)
+   // Shooting star (Strong Upper Wick Rejection)
    if((upper_wick / rng) >= 0.55 && (body / rng) <= 0.35)
       return true;
 
-   // 2. Bearish Engulfing
-   if(p.close > p.open && c.close < c.open && c.close <= p.open && c.open >= p.close)
+   // Bearish Engulfing
+   if(p.close > p.open && c.close < c.open && c.close <= p.open && c.open >= p.close - 0.05)
       return true;
 
    return false;
 }
 
 //+------------------------------------------------------------------+
-//| Count Open Positions by Magic Number                             |
+//| Count Open Positions                                             |
 //+------------------------------------------------------------------+
 int CountOpenPositions()
 {
@@ -271,17 +301,16 @@ void OnTick()
 {
    datetime current_bar = iTime(_Symbol, PERIOD_M1, 0);
    if(current_bar == m_last_bar_time)
-      return; // Only process on new M1 bar completion
+      return; // Bar close execution only
 
    m_last_bar_time = current_bar;
 
-   // Fetch recent M1 bars
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
-   int copied = CopyRates(_Symbol, PERIOD_M1, 0, 30, rates);
-   if(copied < 25) return;
+   int copied = CopyRates(_Symbol, PERIOD_M1, 0, 35, rates);
+   if(copied < 30) return;
 
-   // 1. Manage Active Position (Time Exit)
+   // 1. Time-based Exit Guard (Max 25 bars in stagnant position)
    if(CountOpenPositions() > 0)
    {
       m_bars_in_trade++;
@@ -294,7 +323,7 @@ void OnTick()
                if(m_position.Magic() == InpMagicNumber && m_position.Symbol() == _Symbol)
                {
                   m_trade.PositionClose(m_position.Ticket());
-                  PrintFormat("[Visual Tester] TIME EXIT: Position closed after %d bars.", m_bars_in_trade);
+                  PrintFormat("[Visual Tester] TIME EXIT: Closed trade after %d bars.", m_bars_in_trade);
                }
             }
          }
@@ -314,24 +343,29 @@ void OnTick()
    if(spread > InpMaxSpread)
       return;
 
-   // 3. Session Filter
+   // 3. Session Hours Filter
    if(!IsInTradeSession(rates[1].time))
       return;
 
-   // 4. Update Supply & Demand Zones
+   // 4. Detect Supply & Demand Formations
    DetectSupplyDemand(rates, copied);
 
-   // 5. Get M15 Trend Filter (EMA 50)
-   double ema_val[1];
-   if(CopyBuffer(m_handleEMA, 0, 1, 1, ema_val) <= 0)
+   // 5. M15 Trend Direction & Slope
+   double ema_val[3];
+   if(CopyBuffer(m_handleEMA, 0, 1, 3, ema_val) < 3)
       return;
 
    double close_price = rates[1].close;
-   bool is_uptrend = (close_price >= ema_val[0]);
-   bool is_downtrend = (close_price <= ema_val[0]);
+   bool ema_bull_slope = (!InpRequireEMASlope || (ema_val[0] >= ema_val[2]));
+   bool ema_bear_slope = (!InpRequireEMASlope || (ema_val[0] <= ema_val[2]));
 
-   // 6. Evaluate Long Setup (Uptrend + In Demand + Bullish Trigger)
-   if(is_uptrend && IsInDemandZone(close_price))
+   bool is_uptrend   = (close_price >= ema_val[0]) && ema_bull_slope;
+   bool is_downtrend = (close_price <= ema_val[0]) && ema_bear_slope;
+
+   int matched_zone = -1;
+
+   // 6. Buy Setup: Uptrend + Inside Demand Zone + Bullish Candle Rejection
+   if(is_uptrend && IsInDemandZone(close_price, matched_zone))
    {
       if(IsBullishTrigger(rates[1], rates[2]))
       {
@@ -344,14 +378,15 @@ void OnTick()
             tp = NormalizeDouble(tp, _Digits);
             if(m_trade.Buy(InpLots, _Symbol, ask, sl, tp, "AI_Scalp_Buy"))
             {
-               PrintFormat("[Visual Tester] BUY OPENED @ %.2f | SL: %.2f | TP: %.2f (R:R 1:%.1f)",
+               m_zones[matched_zone].mitigated = true; // Mark zone as used
+               PrintFormat("[Visual Tester] BUY @ %.2f | SL: %.2f | TP: %.2f (R:R 1:%.1f)",
                            ask, sl, tp, InpRiskReward);
             }
          }
       }
    }
-   // 7. Evaluate Short Setup (Downtrend + In Supply + Bearish Trigger)
-   else if(is_downtrend && IsInSupplyZone(close_price))
+   // 7. Sell Setup: Downtrend + Inside Supply Zone + Bearish Candle Rejection
+   else if(is_downtrend && IsInSupplyZone(close_price, matched_zone))
    {
       if(IsBearishTrigger(rates[1], rates[2]))
       {
@@ -364,7 +399,8 @@ void OnTick()
             tp = NormalizeDouble(tp, _Digits);
             if(m_trade.Sell(InpLots, _Symbol, bid, sl, tp, "AI_Scalp_Sell"))
             {
-               PrintFormat("[Visual Tester] SELL OPENED @ %.2f | SL: %.2f | TP: %.2f (R:R 1:%.1f)",
+               m_zones[matched_zone].mitigated = true; // Mark zone as used
+               PrintFormat("[Visual Tester] SELL @ %.2f | SL: %.2f | TP: %.2f (R:R 1:%.1f)",
                            bid, sl, tp, InpRiskReward);
             }
          }
