@@ -24,7 +24,7 @@ from agents.orchestrator import MultiAgentOrchestrator
 from agents.market_regime.detector import MarketRegimeReport
 from agents.risk_manager.gatekeeper import TradeApproval
 from engine.core.types import OrderDirection
-from strategies.incubator.xauusd_trend_pullback_scalper import XAUUSDTrendPullbackScalper
+from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -133,7 +133,14 @@ class LiveBridgeServer:
         self.dry_run = dry_run
 
         self.orchestrator = MultiAgentOrchestrator()
-        self.strategy = XAUUSDTrendPullbackScalper(risk_reward_ratio=2.0, max_bars_hold=25)
+        self.strategy = SessionAnchoredVWAPStrategy(
+            band_multiplier=1.8,
+            sl_buffer_dollars=0.40,
+            risk_reward_ratio=2.0,
+            base_risk_pct=0.5,
+            greed_risk_pct=0.25,
+            max_bars_hold=60
+        )
         self.engine_adapter = LiveBridgeEngineAdapter(self)
         self.strategy.set_engine(self.engine_adapter)
         self.strategy.on_init()
