@@ -45,14 +45,22 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
         *   **Payoff Ratio**: Mencapai **3.92x** (rata-rata win hampir 4x loss).
         *   **Konsistensi**: 6-7 bulan dari 10.5 bulan berprofit bersih dengan Monthly Ratchet Governor.
 
-### **Fase Eksplorasi 4: Pengembangan Priority 2 - Intraday SMC Expansion Sniper & Dual-Horizon Portfolio**
+### **Fase Eksplorasi 5: "Shadow Clone" Automated Multi-Timeframe & Confluence Matrix Explorer**
 
 *   **Status**: **SELESAI.**
-*   **Modul Baru**:
-    - `strategies/incubator/strat_6_intraday_smc.py`: Menggabungkan struktur H1 (BOS/CHoCH) dengan eksekusi M15 di zona Order Block & Inversion FVG.
-    - `strategies/modules/setups/fibonacci_confluence.py`: Engine kalkulasi Fibonacci Retracement (Golden Pocket 61.8% - 78.6% OTE) & Fibonacci Extension (1.272 & 1.618 Wave 3 Expansion Target) berbasis prinsip Elliott Wave Theory.
-*   **Temuan Kunci (Fibonacci & Multi-TP)**:
-    1.  **Single TP vs Multi-Stage TP**: Terbukti secara kuantitatif bahwa 1 Single Target (100% @ 3.0R) mencetak profit 4x lebih tinggi (+$880 vs +$230) dibanding memecah order ke banyak TP (TP3, TP4, TP5) karena fragmentasi volume dan beban komisi broker.
-    2.  **Fibonacci Golden Pocket Confluence (M15/H1)**: Menggabungkan zona Order Block dengan Golden Pocket (61.8% - 78.6% OTE) melompatkan Win Rate ke **75.0%** dengan Profit Factor luar biasa **5.65**! Sebaliknya, Fibonacci pada M5 gagal total (PF 0.63) akibat noise volatilitas mikro.
+*   **Modul & Script**:
+    - `strategies/ablation/shadow_clone_matrix_explorer.py`: Engine paralel yang menyimulasikan 16 konfigurasi Shadow Clone multi-timeframe secara simultan pada data 10.5 bulan.
+    - `reports/shadow_clone_leaderboard.json`: Peta peringkat resmi seluruh strategi.
+*   **Peta Temuan Kunci (The Universal Truths of XAUUSD)**:
+    1.  **VWAP Mean Reversion Wajib di M1 (Golden Window 10:30-14:30 UTC)**:
+        - Mencetak profit absolut terbesar: **+$3,812.27** (PF 1.53, Payoff 4.14x).
+        - Jika dipaksakan ke M5, strategi VWAP hancur (-$1,248, PF 0.77).
+    2.  **SMC & POI Wajib di M15 dengan Bias H1 / H4**:
+        - `Clone-11 (M15 SMC + H4 Bias + 3R)` mencetak Profit Factor tertinggi: **2.99** dengan Win Rate **60.0%** dan Max Drawdown hanya **1.0%**!
+        - `Clone-09 (M15 SMC + H1 Bias + 3R)` menghasilkan **+$588.22** (PF 2.66, Win Rate 50.0%, DD 1.9%).
+        - `Clone-15 (M15 SMC + Fibo 1.618 Extension TP)` menghasilkan **+$503.66** (PF 2.43).
+    3.  **Kombinasi Beracun yang Dihindari Otomatis**:
+        - Sesi pagi London (08:00-11:30 UTC) pada VWAP adalah jebakan manipulasi (-$1,098, DD 23.7%).
+        - SMC pada M5 menghasilkan noise tinggi (PF 1.03).
 
 ---
