@@ -28,18 +28,24 @@ from agents.risk_manager.monthly_ratchet_governor import MonthlyRatchetGovernor,
 class SessionAnchoredVWAPStrategy(BaseStrategy):
     def __init__(
         self,
-        band_multiplier: float = 2.0,      # Fade at 2.0 standard deviations
-        sl_buffer_dollars: float = 0.40,
+        band_multiplier: float = 1.8,      # Fade at 1.8 standard deviations (Empirically verified)
+        sl_buffer_dollars: float = 0.50,
         risk_reward_ratio: float = 2.0,
         base_risk_pct: float = 0.5,
         greed_risk_pct: float = 0.25,
-        max_bars_hold: int = 60           # 1-hour maximum hold for mean reversion
+        max_bars_hold: int = 60,           # 1-hour maximum hold for mean reversion
+        start_hour: int = 10,
+        start_minute: int = 30,
+        end_hour: int = 14,
+        end_minute: int = 30
     ):
         super().__init__("Anchored_VWAP_Mean_Reversion")
         self.band_multiplier = band_multiplier
         self.sl_buffer = sl_buffer_dollars
         self.risk_reward_ratio = risk_reward_ratio
         self.max_bars_hold = max_bars_hold
+        self.start_time = (start_hour, start_minute)
+        self.end_time = (end_hour, end_minute)
 
         self.candle_detector = CandlestickPatternDetector()
         self.governor = MonthlyRatchetGovernor(
@@ -127,8 +133,9 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
         else:
             self.bars_in_trade = 0
 
-        # Golden Hours: London & NY (08:00 - 16:00 UTC)
-        is_trade_window = (8, 0) <= (t.hour, t.minute) <= (16, 0)
+        # Golden Institutional Window: High-Volume Auction Core (Default: 10:30 - 14:30 UTC)
+        # Eliminates 08:00-10:00 manipulation & 15:00-16:00 whipsaw sinkhole
+        is_trade_window = self.start_time <= (t.hour, t.minute) <= self.end_time
         if not is_trade_window or self.traded_today_count >= 2:
             return
 
