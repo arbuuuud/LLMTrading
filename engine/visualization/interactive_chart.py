@@ -34,6 +34,7 @@ from engine.execution.slippage import FixedSlippageModel
 from engine.metrics.performance import PerformanceCalculator
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 from strategies.incubator.strat_6_intraday_smc import IntradaySMCStrategy
+from tests.massive_shadow_clone_ema_grid import MassiveCloneStrategy
 
 
 def generate_optimized_visual(output_file: str = "reports/backtest_visual.html"):
@@ -46,17 +47,12 @@ def generate_optimized_visual(output_file: str = "reports/backtest_visual.html")
     print(f"[Visualizer] Running Engine 1: Priority 1 Scalper M1 ({len(df_m1):,} bars)...")
     c1 = AccountConfig(initial_balance=10000.0, commission_per_lot_round_turn=7.0)
     e1 = EventEngine(config=c1, commission_model=CommissionModel(7.0), slippage_model=FixedSlippageModel(0.02))
-    s1 = SessionAnchoredVWAPStrategy(
-        band_multiplier=1.8,
-        sl_buffer_dollars=0.50,
-        risk_reward_ratio=2.0,
-        base_risk_pct=0.5,
-        greed_risk_pct=0.25,
-        max_bars_hold=60,
-        start_hour=10,
-        start_minute=30,
-        end_hour=14,
-        end_minute=30
+    s1 = MassiveCloneStrategy(
+        name="Champion_Scalper",
+        mechanic="ATR_BUFFER",
+        tf="H1",
+        ema_period=50,
+        atr_mult=1.5
     )
     res_scalp = e1.run_bars(df_m1, s1)
     perf_scalp = res_scalp["performance"]

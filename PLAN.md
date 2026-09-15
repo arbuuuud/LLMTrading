@@ -48,24 +48,20 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
 ### **Fase Eksplorasi 6: Riset Filter Tren Makro EMA (20, 50, 100, 200) & Eliminasi Bulan Merah**
 
 *   **Status**: **SELESAI.**
-*   **Aksi Shadow Clone**:
-    - Script `tests/test_ema_shadow_clones.py` mengerahkan 17 konfigurasi Shadow Clone secara paralel menguji EMA 20, 50, 100, dan 200 pada H1 dan H4.
-    - Menyelidiki fenomena "Losing Months" (September & November 2025 di mana Gold meledak parabolik +$400).
-*   **Temuan Kunci (Breakthrough Results)**:
-    1.  **Rank #1: H1 EMA 50 + Parabolic Buffer $15**:
-        - Net Profit melonjak dari **+$4,043.98 $\rightarrow$ +$4,974.72** (+23% profit lift).
-        - Profit Factor melesat dari **1.49 $\rightarrow$ 2.02**.
-        - Win Rate meningkat dari **27.6% $\rightarrow$ 35.9%**.
-        - Max Drawdown tertekan ke level super aman **5.9%**.
-    2.  **Rank #2: H4 Strict EMA 20 (Trade with Trend)**:
-        - Membalikkan bulan minus menjadi hijau secara spektakuler:
-          * Mei 2025: -$305 $\rightarrow$ **+$99.60**
-          * September 2025: -$348 $\rightarrow$ **+$478.39**
-          * November 2025: -$382 $\rightarrow$ **+$102.45**
-        - Konsistensi bulanan melonjak ke **9 dari 11 bulan profit (82% bulan hijau)**!
-        - Profit Factor **2.41**, Win Rate **39.4%**, Payoff **3.70x**.
-    3.  **Portofolio Gabungan (H4 EMA20 Scalper + Intraday SMC)**:
-        - Net PnL gabungan: **+$4,750.23** (+47.5% ROI pada modal $10k).
-        - Konsistensi: **9 dari 11 bulan profit bersih (82%)**.
+*   **Aksi Massive Shadow Clones (61+ Klon Paralel)**:
+    - Script `tests/massive_shadow_clone_ema_grid.py` mengerahkan 61 konfigurasi instrumen kuantitatif tingkat lanjut (Binary Veto, Asymmetric Sizing, Dynamic Target, Slope Acceleration, dan Normalized ATR Buffer).
+*   **Pemenang Mutlak (The Absolute Record Champion)**:
+    1.  **Rank #1: ATR-Normalized Buffer (H1 EMA 50 dengan Jarak > 1.5x ATR)**:
+        - Menggantikan buffer dollar kaku dengan volatilitas dinamis (1.5x ATR H1).
+        - Net Profit Scalper melesat ke rekor tertinggi: **+$6,539.48** (+61% profit jump!).
+        - Profit Factor: **2.37**, Win Rate: **37.6%**, Payoff: **3.94x**, Max DD: **6.9%**.
+    2.  **Ultimate Dual-Horizon Portfolio (Champion Scalper + Intraday SMC)**:
+        - Total Net PnL Gabungan: **+$6,837.64** (+68.4% ROI dalam 10.5 bulan!).
+        - Lonjakan performa di bulan-bulan agresif:
+          * Juni 2025: **+$1,542.24**
+          * Agustus 2025: **+$1,201.29**
+          * Februari 2026: **+$1,987.67**
+          * Mei 2025: **+$531.55** (flip dari minus!)
+          * November 2025: rugi terpangkas habis menjadi hanya -$120 (dari -$382).
 
 ---
