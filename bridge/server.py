@@ -135,11 +135,15 @@ class LiveBridgeServer:
         self.orchestrator = MultiAgentOrchestrator()
         self.strategy = SessionAnchoredVWAPStrategy(
             band_multiplier=1.8,
-            sl_buffer_dollars=0.40,
+            sl_buffer_dollars=0.50,
             risk_reward_ratio=2.0,
             base_risk_pct=0.5,
             greed_risk_pct=0.25,
-            max_bars_hold=60
+            max_bars_hold=60,
+            start_hour=10,
+            start_minute=30,
+            end_hour=14,
+            end_minute=30
         )
         self.engine_adapter = LiveBridgeEngineAdapter(self)
         self.strategy.set_engine(self.engine_adapter)
