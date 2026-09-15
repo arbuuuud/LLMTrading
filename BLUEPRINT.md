@@ -42,14 +42,21 @@ Fokus utama sistem adalah komoditas logam mulia dengan korelasi intermarket glob
 
 Sistem mendukung tiga horizon waktu dengan prioritas utama pada **Scalping**:
 
-### 3.1. Prioritas 1: Scalping (M1 / Tick-level / Second-level)
-- **Karakteristik**: Durasi hold beberapa detik hingga 15 menit. Menangkap inefisiensi sesaat, order flow imbalances, liquidity sweeps, dan reaksi volatilitas pembukaan sesi (London/NY Open).
-- **Tantangan Utama**: Biaya transaksi (Spread, Slippage, Komisi) dan *execution latency*.
-- **Kunci Sukses**: Backtesting harus menggunakan **Tick Data aktual** dengan simulasi Bid/Ask spread dinamis.
+### 3.1. Prioritas 1: Scalping (M1 / Tick-level) — The Cash Generator
+- **Strategi Pemenang**: `SessionAnchoredVWAPStrategy` (Auction Market Theory $\pm 1.8\sigma$) dipadu dengan **Filter Volatilitas Dinamis H1 EMA 50 (Jarak > 1.5x ATR)**.
+- **Jendela Waktu**: Golden Institutional Window (10:30 – 14:30 UTC / Inti Lelang New York Open).
+- **Magic Number MT5**: `1001`.
+- **Kinerja Empiris 10.5 Bulan**: Net Profit **+$6,539.48**, Profit Factor **2.37**, Win Rate **37.6%**, Payoff Ratio **3.94x**, Max DD **6.9%**.
 
-### 3.2. Prioritas 2: Intraday (M5 - M15 - H1)
-- **Karakteristik**: Durasi hold 1 jam hingga akhir sesi hari bersangkutan (menghindari biaya swap/overnight risk).
-- **Logika**: Daily VWAP, Session High/Low Liquidity Run, Volume Profile Value Area (VAH/VAL/POC), Mean Reversion ke mean harga rata-rata sesi.
+### 3.2. Prioritas 2: Intraday (M15 - H1) — The Low-DD Trend Anchor
+- **Strategi Pemenang**: `NFCFiboHybridStrategy` (Fadli NFC Unfilled Institutional Orders: Drop-Base-Rally & Rally-Base-Drop) dipadu dengan **Filter Arah Tren H1 EMA 50**.
+- **Jendela Waktu**: 08:00 – 16:30 UTC (Close All EOD pukul 21:30 UTC bebas overnight swap).
+- **Magic Number MT5**: `2001`.
+- **Kinerja Empiris 10.5 Bulan**: Net Profit **+$713.03**, Profit Factor **1.31**, Win Rate **38.6%**, Payoff Ratio **2.09x**, Max DD **5.6%**.
+
+### 3.3. Portofolio Sinergi Gabungan (Dual-Horizon Combined)
+- **Total Net PnL (10.5 Bulan)**: **+$7,252.51** (+72.5% ROI pada modal $10,000).
+- **Konsistensi Bulanan**: **8 dari 11 bulan berprofit bersih (73% Bulan Hijau)**, membalikkan bulan tren ekstrem seperti September 2025 menjadi profit bersih.
 
 ### 3.3. Prioritas 3: Swing (H4 - Daily)
 - **Karakteristik**: Durasi hold beberapa hari hingga minggu.

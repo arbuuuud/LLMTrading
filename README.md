@@ -29,18 +29,21 @@ File tersebut adalah **Single Source of Truth (SSOT)** yang memuat:
 ```text
 LLMTrading/
 ├── BLUEPRINT.md                 # Master Architecture & System Specification (SSOT)
+├── PLAN.md                      # Roadmap & Log Eksplorasi Multi-Fase (Shadow Clone)
 ├── README.md                    # Ringkasan proyek & panduan setup
 ├── configs/                     # Konfigurasi aset & limit risiko
 ├── data/                        # Penyimpanan data lokal (Parquet Tick & Bars)
-│   └── scripts/                 # Ekstraktor data dari MetaTrader 5 (Wine)
+│   └── scripts/                 # Ekstraktor data dari MetaTrader 5 (Wine) & HTF Generator
 ├── engine/                      # Custom High-Performance Backtest Engine
 │   ├── core/                    # Engine event-driven & order matching
 │   ├── metrics/                 # Metrik kinerja institusional (Sharpe, DD, Sortino)
-│   └── monte_carlo/             # Simulasi permutasi Monte Carlo (1000+ run)
-├── agents/                      # Modul AI Multi-Agent & Prompts
-├── strategies/                  # Katalog strategi (Incubator, Active, Retired)
-├── knowledge/                   # Memori sistem (Playbooks, Post-Mortem, Learnings)
-└── tests/                       # Unit tests & verifikasi matematika
+│   └── visualization/           # Standalone 60fps Canvas Visualizer & Multi-Horizon Dashboard
+├── bridge/                      # Live Execution Bridge Server (Python TCP) & MT5 EA (MQL5)
+├── strategies/                  # Katalog strategi (Incubator, Active, Modules)
+│   ├── modules/                 # Lego modular components (OB, iFVG, Fibo, Market Structure)
+│   └── ablation/                # Shadow Clone automated matrix explorers
+├── knowledge/                   # Memori sistem (Playbooks, Naruto Shadow Clone Guide)
+└── tests/                       # Unit tests, grid audit & live bridge verification
 ```
 
 ---
