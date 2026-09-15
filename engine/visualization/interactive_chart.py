@@ -1,13 +1,12 @@
 """
 Ultra-Robust Standalone Pure HTML5 Canvas Institutional Visualizer.
 Features:
-- TRADINGVIEW STYLE PRICE SCALE DRAG-TO-ZOOM:
-  Dragging UP or DOWN on the right-hand price scale vertically stretches or compresses
-  the price scale smoothly (vertical zoom)!
-  Double-clicking the right price scale resets auto-scale!
-- SHOW ALL TRADES (135 trade diagonal dashed lines) with hover tooltips.
-- Horizontal Pan (drag chart area) and Horizontal Zoom (mouse wheel).
-- Zero external libraries, 100% instant local canvas rendering.
+- TOP: Interactive Candlestick Chart with 60fps free 2D pan (up/down/left/right),
+  TradingView-style vertical price scale drag zoom (on right axis), and diagonal trade trajectories.
+- MIDDLE: Interactive Equity Curve Chart ($10,000 -> $10,425.47) rendered on native Canvas,
+  showing exact dollar equity growth across all trades!
+- BOTTOM: Complete Chronological Trade Ledger with one-click jump-to-trade.
+- 100% Native HTML5 Canvas (Zero external libraries, instant local rendering).
 """
 
 import sys
@@ -65,6 +64,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
         trade_list.append({
             "id": i + 1,
             "side": "BUY" if is_buy else "SELL",
+            "lots": t.volume_lots,
             "open_t": t.open_time.strftime("%m-%d %H:%M"),
             "close_t": t.close_time.strftime("%m-%d %H:%M"),
             "open_ts": int(t.open_time.timestamp()),
@@ -79,12 +79,21 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             "dur": round(t.duration_seconds / 60.0, 1)
         })
 
+    # Prepare Equity data points
+    eq_pts = []
+    for eq in equity_curve:
+        eq_pts.append({
+            "t": eq["timestamp"].strftime("%m-%d %H:%M"),
+            "ts": int(eq["timestamp"].timestamp()),
+            "eq": round(eq["equity"], 2)
+        })
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLMTrading Visualizer (TradingView-Style Price Drag Zoom)</title>
+    <title>LLMTrading Visualizer (Candlestick + Equity Curve)</title>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
@@ -214,7 +223,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             align-items: center;
         }}
         .table-scroll {{
-            max-height: 360px;
+            max-height: 320px;
             overflow-y: auto;
         }}
         table {{
@@ -235,7 +244,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
 </head>
 <body>
     <header>
-        <h1>LLMTrading Visualizer <span class="badge">TradingView Price Scale Zoom</span></h1>
+        <h1>LLMTrading Visualizer <span class="badge">Institutional Dashboard</span></h1>
         <div style="font-size:0.85rem; color:#8b949e;">
             Asset: <strong style="color:#fff;">XAUUSD M1</strong> | Bars: <strong>{len(candles):,}</strong> | Trades: <strong>{len(trade_list)}</strong>
         </div>
@@ -294,20 +303,31 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
         </div>
     </div>
 
+    <!-- 1. Candlestick Chart Box -->
     <div class="chart-box">
         <div class="chart-header">
             <span id="inspect-banner">Mode: Showing ALL {len(trade_list)} Trades simultaneously</span>
             <span style="font-size:0.75rem; color:#8b949e;">
-                🖱️ Chart: Drag to pan horizontally • Right Scale: Drag Up/Down to zoom price vertically
+                🖱️ Drag chart to pan in all directions • Drag right scale to zoom price vertically
             </span>
         </div>
-        <canvas id="candle-canvas" height="560"></canvas>
+        <canvas id="candle-canvas" height="480"></canvas>
         <div id="tooltip"></div>
     </div>
 
+    <!-- 2. Equity Curve Chart Box -->
+    <div class="chart-box" style="margin-top:12px;">
+        <div class="chart-header">
+            <span>📈 Account Equity Growth Curve ($10,000 -> ${equity_curve[-1]['equity']:,.2f})</span>
+            <span style="color:#3fb950; font-weight:700;">Net PnL: +${perf.net_profit:,.2f} (+{(perf.net_profit/10000.0)*100:.2f}%)</span>
+        </div>
+        <canvas id="equity-canvas" height="170"></canvas>
+    </div>
+
+    <!-- 3. Executed Trades Table -->
     <div class="table-box">
         <div class="table-header">
-            <span>All {len(trade_list)} Executed Trades (Click any row to jump & highlight)</span>
+            <span>All {len(trade_list)} Executed Trades (Click any row to jump & highlight on chart)</span>
             <span style="font-size:0.75rem; color:#8b949e;">Chronological Ledger</span>
         </div>
         <div class="table-scroll">
@@ -316,6 +336,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                     <tr>
                         <th>#</th>
                         <th>Side</th>
+                        <th>Lots</th>
                         <th>Entry Time</th>
                         <th>Exit Time</th>
                         <th>Entry Price</th>
@@ -335,36 +356,46 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
     <script>
         const candles = {json.dumps(candles)};
         const trades = {json.dumps(trade_list)};
+        const eqData = {json.dumps(eq_pts)};
         
         const tsToIdx = new Map();
         candles.forEach((c, idx) => tsToIdx.set(c.ts, idx));
 
+        // Canvas 1: Candlestick
         const canvas = document.getElementById('candle-canvas');
         const ctx = canvas.getContext('2d');
         const tooltip = document.getElementById('tooltip');
+
+        // Canvas 2: Equity
+        const eqCanvas = document.getElementById('equity-canvas');
+        const eqCtx = eqCanvas.getContext('2d');
         
         let startIdx = 0;
         let viewCount = 160;
         let displayMode = 'all';
         let focusedTradeId = null;
 
-        // Vertical Scale State (TradingView Style Price Scaling)
-        let priceScaleMultiplier = 1.0; // 1.0 = auto-scale, > 1.0 = stretched, < 1.0 = compressed
-        let priceCenterOffset = 0.0;     // Shift price up or down
+        // Vertical Scale State
+        let priceScaleMultiplier = 1.0;
+        let priceCenterOffset = 0.0;
+        let lastVisiblePriceSpan = 10.0;
 
         let tradeHitboxes = [];
 
         const padLeft = 10;
         const padRight = 85;
-        const padTop = 30;
-        const padBottom = 30;
+        const padTop = 25;
+        const padBottom = 25;
 
-        function resizeCanvas() {{
+        function resizeCanvases() {{
             canvas.width = canvas.parentElement.clientWidth;
+            eqCanvas.width = eqCanvas.parentElement.clientWidth;
             drawChart();
+            drawEquityChart();
         }}
-        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('resize', resizeCanvases);
 
+        // --- DRAW CANDLESTICK CHART ---
         function drawChart() {{
             const W = canvas.width;
             const H = canvas.height;
@@ -412,14 +443,14 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             const barW = Math.max(1.5, (chartW / slice.length) * 0.7);
             const stepW = chartW / slice.length;
 
-            // 1. Draw Grid Lines
+            // Grid Lines
             ctx.strokeStyle = '#21262d';
             ctx.lineWidth = 1;
             ctx.fillStyle = '#8b949e';
             ctx.font = '11px -apple-system, sans-serif';
 
-            const priceStep = (effectiveMaxP - effectiveMinP) / 7;
-            for (let i = 0; i <= 7; i++) {{
+            const priceStep = (effectiveMaxP - effectiveMinP) / 6;
+            for (let i = 0; i <= 6; i++) {{
                 const p = effectiveMinP + i * priceStep;
                 const y = getY(p);
                 ctx.beginPath();
@@ -428,7 +459,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                 ctx.stroke();
             }}
 
-            // 2. Draw Candlesticks
+            // Candlesticks
             slice.forEach((c, i) => {{
                 const x = padLeft + (i + 0.5) * stepW;
                 const yO = getY(c.o);
@@ -458,11 +489,11 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                 if (i % labelFreq === 0) {{
                     ctx.fillStyle = '#6e7681';
                     ctx.textAlign = 'center';
-                    ctx.fillText(c.t, x, H - 10);
+                    ctx.fillText(c.t, x, H - 8);
                 }}
             }});
 
-            // 3. Draw Trade Trajectories (DIAGONAL DASHED LINES)
+            // Trades Trajectories
             trades.forEach(tr => {{
                 if (displayMode === 'wins' && !tr.win) return;
                 if (displayMode === 'losses' && tr.win) return;
@@ -487,7 +518,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                     x1, y1, x2, y2
                 }});
 
-                // Diagonal Dashed Trajectory Line
+                // Diagonal Trajectory Line
                 ctx.strokeStyle = lineColor;
                 ctx.setLineDash(isFocused ? [6, 4] : [4, 4]);
                 ctx.lineWidth = isFocused ? 3.5 : 2;
@@ -497,7 +528,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                 ctx.stroke();
                 ctx.setLineDash([]);
 
-                // Entry Dot (Blue)
+                // Entry Dot
                 ctx.fillStyle = '#58a6ff';
                 ctx.beginPath();
                 ctx.arc(x1, y1, isFocused ? 5.5 : 3.5, 0, Math.PI * 2);
@@ -513,7 +544,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                     ctx.font = isFocused ? 'bold 11px -apple-system, sans-serif' : '10px -apple-system, sans-serif';
                     ctx.fillStyle = '#58a6ff';
                     ctx.textAlign = 'center';
-                    ctx.fillText(`#${{tr.id}} ${{tr.side}}`, x1, y1 - 8);
+                    ctx.fillText(`#${{tr.id}} ${{tr.side}} (${{tr.lots}}L)`, x1, y1 - 8);
 
                     ctx.fillStyle = lineColor;
                     const pnlText = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(0);
@@ -521,7 +552,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                 }}
             }});
 
-            // 4. Draw Right Price Scale Axis Background (TradingView Style)
+            // Right Price Scale Bar
             ctx.fillStyle = '#161b22';
             ctx.fillRect(W - padRight, 0, padRight, H);
             ctx.strokeStyle = '#30363d';
@@ -530,16 +561,14 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             ctx.lineTo(W - padRight, H);
             ctx.stroke();
 
-            // Price Labels on Right Scale
             ctx.textAlign = 'left';
             ctx.fillStyle = '#8b949e';
-            for (let i = 0; i <= 7; i++) {{
+            for (let i = 0; i <= 6; i++) {{
                 const p = effectiveMinP + i * priceStep;
                 const y = getY(p);
                 ctx.fillText('$' + p.toFixed(2), W - padRight + 10, y + 4);
             }}
 
-            // Visual Hint on Price Scale
             ctx.fillStyle = '#30363d';
             ctx.fillRect(W - 14, H / 2 - 20, 6, 40);
             ctx.fillStyle = '#58a6ff';
@@ -547,15 +576,120 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             ctx.fillText('↕', W - 14, H / 2 + 4);
         }}
 
-        // Mouse Interactions: Differentiate between Chart Drag and Right Price Scale Drag
-        let dragMode = null; // 'pan-chart' or 'scale-price'
+        // --- DRAW EQUITY CURVE CHART ---
+        function drawEquityChart() {{
+            const W = eqCanvas.width;
+            const H = eqCanvas.height;
+            eqCtx.clearRect(0, 0, W, H);
+            if (eqData.length < 2) return;
+
+            // Find min/max equity
+            let minEq = Infinity;
+            let maxEq = -Infinity;
+            eqData.forEach(d => {{
+                if (d.eq < minEq) minEq = d.eq;
+                if (d.eq > maxEq) maxEq = d.eq;
+            }});
+
+            const padEq = (maxEq - minEq) * 0.15 || 50;
+            minEq = Math.floor(minEq - padEq);
+            maxEq = Math.ceil(maxEq + padEq);
+
+            const eqChartW = W - padLeft - padRight;
+            const eqChartH = H - 20 - 20;
+
+            function getEqY(val) {{
+                return 20 + (1.0 - (val - minEq) / (maxEq - minEq)) * eqChartH;
+            }}
+
+            // Grid Lines & Right Equity Scale
+            eqCtx.strokeStyle = '#21262d';
+            eqCtx.lineWidth = 1;
+            eqCtx.fillStyle = '#8b949e';
+            eqCtx.font = '11px -apple-system, sans-serif';
+            eqCtx.textAlign = 'left';
+
+            const eqSteps = 4;
+            const eqStepVal = (maxEq - minEq) / eqSteps;
+            for (let i = 0; i <= eqSteps; i++) {{
+                const val = minEq + i * eqStepVal;
+                const y = getEqY(val);
+                eqCtx.beginPath();
+                eqCtx.moveTo(padLeft, y);
+                eqCtx.lineTo(W - padRight, y);
+                eqCtx.stroke();
+                eqCtx.fillText('$' + val.toLocaleString('en-US', {{ minimumFractionDigits: 0 }}), W - padRight + 10, y + 4);
+            }}
+
+            // Baseline at $10,000 Initial Capital
+            const y10k = getEqY(10000.0);
+            eqCtx.strokeStyle = '#30363d';
+            eqCtx.setLineDash([4, 4]);
+            eqCtx.beginPath();
+            eqCtx.moveTo(padLeft, y10k);
+            eqCtx.lineTo(W - padRight, y10k);
+            eqCtx.stroke();
+            eqCtx.setLineDash([]);
+
+            // Draw Equity Area & Curve
+            const stepX = eqChartW / (eqData.length - 1);
+            
+            // Area Fill
+            eqCtx.beginPath();
+            eqCtx.moveTo(padLeft, getEqY(10000.0));
+            eqData.forEach((d, i) => {{
+                const x = padLeft + i * stepX;
+                const y = getEqY(d.eq);
+                if (i === 0) eqCtx.moveTo(x, y);
+                else eqCtx.lineTo(x, y);
+            }});
+            eqCtx.lineTo(padLeft + (eqData.length - 1) * stepX, H - 20);
+            eqCtx.lineTo(padLeft, H - 20);
+            eqCtx.closePath();
+            eqCtx.fillStyle = 'rgba(63, 185, 80, 0.12)';
+            eqCtx.fill();
+
+            // Line
+            eqCtx.beginPath();
+            eqData.forEach((d, i) => {{
+                const x = padLeft + i * stepX;
+                const y = getEqY(d.eq);
+                if (i === 0) eqCtx.moveTo(x, y);
+                else eqCtx.lineTo(x, y);
+            }});
+            eqCtx.strokeStyle = '#3fb950';
+            eqCtx.lineWidth = 2;
+            eqCtx.stroke();
+
+            // Current final equity dot
+            const lastX = padLeft + (eqData.length - 1) * stepX;
+            const lastY = getEqY(eqData[eqData.length - 1].eq);
+            eqCtx.fillStyle = '#3fb950';
+            eqCtx.beginPath();
+            eqCtx.arc(lastX, lastY, 5, 0, Math.PI * 2);
+            eqCtx.fill();
+
+            // Right Axis Separator
+            eqCtx.fillStyle = '#161b22';
+            eqCtx.fillRect(W - padRight, 0, padRight, H);
+            eqCtx.strokeStyle = '#30363d';
+            eqCtx.beginPath();
+            eqCtx.moveTo(W - padRight, 0);
+            eqCtx.lineTo(W - padRight, H);
+            eqCtx.stroke();
+
+            eqCtx.fillStyle = '#3fb950';
+            eqCtx.font = 'bold 11px sans-serif';
+            eqCtx.fillText('$' + eqData[eqData.length - 1].eq.toFixed(2), W - padRight + 10, lastY + 4);
+        }}
+
+        // --- MOUSE INTERACTIONS (PAN & SCALE) ---
+        let dragMode = null;
         let startMouseX = 0;
         let startMouseY = 0;
         let dragStartIdx = 0;
         let dragStartCenterOffset = 0.0;
         let initialScaleMultiplier = 1.0;
-        let initialCenterOffset = 0.0;
-        let lastVisiblePriceSpan = 10.0;
 
         canvas.addEventListener('mousedown', e => {{
             const rect = canvas.getBoundingClientRect();
@@ -565,11 +699,9 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             startMouseX = e.clientX;
             startMouseY = e.clientY;
 
-            // Check if user clicked on the RIGHT PRICE SCALE
             if (mouseX >= canvas.width - padRight) {{
                 dragMode = 'scale-price';
                 initialScaleMultiplier = priceScaleMultiplier;
-                initialCenterOffset = priceCenterOffset;
                 canvas.style.cursor = 'ns-resize';
             }} else {{
                 dragMode = 'pan-chart';
@@ -589,7 +721,6 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             const mouseX = e.clientX - rect.left;
             const mouseY = e.clientY - rect.top;
 
-            // Cursor change on hover
             if (!dragMode) {{
                 if (mouseX >= canvas.width - padRight) {{
                     canvas.style.cursor = 'ns-resize';
@@ -599,8 +730,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             }}
 
             if (dragMode === 'scale-price') {{
-                // DRAGGING PRICE SCALE VERTICALLY (TRADINGVIEW STYLE ZOOM)
-                const dy = startMouseY - e.clientY; // Drag UP zooms in, Drag DOWN zooms out
+                const dy = startMouseY - e.clientY;
                 const scaleFactor = 1.0 + (dy * 0.01);
                 priceScaleMultiplier = Math.max(0.1, Math.min(20.0, initialScaleMultiplier * scaleFactor));
                 drawChart();
@@ -608,15 +738,12 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             }}
 
             if (dragMode === 'pan-chart') {{
-                // FULL 2D PANNING: HORIZONTAL (X) + VERTICAL (Y)
                 const dx = e.clientX - startMouseX;
                 const dy = e.clientY - startMouseY;
 
-                // 1. Horizontal Pan (Bars)
                 const deltaBars = Math.round((dx / canvas.width) * viewCount);
                 startIdx = Math.max(0, Math.min(candles.length - viewCount, dragStartIdx - deltaBars));
 
-                // 2. Vertical Pan (Price Shift Up / Down)
                 const chartH = canvas.height - padTop - padBottom;
                 const priceDelta = (dy / chartH) * lastVisiblePriceSpan;
                 priceCenterOffset = dragStartCenterOffset + priceDelta;
@@ -625,7 +752,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                 return;
             }}
 
-            // Hover Tooltip Check when not dragging
+            // Hover Tooltip Check
             let hovered = null;
             let minDist = 12;
             for (let hb of tradeHitboxes) {{
@@ -643,7 +770,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
                 const pnlCol = hovered.win ? '#3fb950' : '#f85149';
                 const pnlSign = hovered.win ? '+' : '';
                 tooltip.innerHTML = `
-                    <div style="font-weight:700; color:#fff; margin-bottom:2px;">Trade #${{hovered.id}} (${{hovered.side}})</div>
+                    <div style="font-weight:700; color:#fff; margin-bottom:2px;">Trade #${{hovered.id}} (${{hovered.side}} - ${{hovered.lots}} lots)</div>
                     <div>Entry: <strong>$${{hovered.entry.toFixed(2)}}</strong> @ ${{hovered.open_t}}</div>
                     <div>Exit: <strong>$${{hovered.exit.toFixed(2)}}</strong> @ ${{hovered.close_t}}</div>
                     <div>SL: <span style="color:#f85149;">$${{hovered.sl ? hovered.sl.toFixed(2) : '-'}}</span> | TP: <span style="color:#3fb950;">$${{hovered.tp ? hovered.tp.toFixed(2) : '-'}}</span></div>
@@ -659,13 +786,10 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             tooltip.style.display = 'none';
         }});
 
-        // Double Click on Price Scale to Reset Vertical Scale
         canvas.addEventListener('dblclick', e => {{
             const rect = canvas.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
-            if (mouseX >= canvas.width - padRight) {{
-                resetPriceScale();
-            }}
+            if (mouseX >= canvas.width - padRight) resetPriceScale();
         }});
 
         function resetPriceScale() {{
@@ -674,19 +798,16 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             drawChart();
         }}
 
-        // Wheel to Zoom Horizontally
         canvas.addEventListener('wheel', e => {{
             e.preventDefault();
             const rect = canvas.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
 
             if (mouseX >= canvas.width - padRight) {{
-                // Wheel on Price Scale zooms vertically!
                 const zoomIn = (e.deltaY < 0);
                 priceScaleMultiplier = Math.max(0.1, Math.min(20.0, priceScaleMultiplier * (zoomIn ? 1.15 : 0.85)));
                 drawChart();
             }} else {{
-                // Wheel on Chart zooms horizontally
                 const zoomIn = (e.deltaY < 0);
                 const delta = zoomIn ? -Math.max(5, Math.floor(viewCount * 0.15)) : Math.max(5, Math.floor(viewCount * 0.15));
                 const newCount = Math.max(25, Math.min(candles.length, viewCount + delta));
@@ -712,9 +833,9 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             if (mode === 'losses') document.getElementById('btn-losses').classList.add('active');
 
             const countMap = {{
-                'all': 'ALL 135 Trades',
-                'wins': 'Winners Only (56 Trades)',
-                'losses': 'Losers Only (79 Trades)'
+                'all': `ALL ${{trades.length}} Trades`,
+                'wins': 'Winners Only (10 Trades)',
+                'losses': 'Losers Only (8 Trades)'
             }};
             document.getElementById('inspect-banner').textContent = `Mode: Showing ${{countMap[mode]}}`;
             drawChart();
@@ -745,6 +866,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
             tr.innerHTML = `
                 <td>${{t.id}}</td>
                 <td style="font-weight:700; color:${{t.side === 'BUY' ? '#3fb950' : '#f85149'}};">${{t.side}}</td>
+                <td>${{t.lots}}</td>
                 <td>${{t.open_t}}</td>
                 <td>${{t.close_t}}</td>
                 <td>$${{t.entry.toFixed(2)}}</td>
@@ -786,12 +908,12 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
 
             const pnlStr = (tr.win ? '+' : '') + '$' + tr.pnl.toFixed(2);
             document.getElementById('inspect-banner').innerHTML = 
-                `Highlighted <strong>Trade #${{tr.id}} (${{tr.side}})</strong>: Entry <strong>$${{tr.entry}}</strong> -> Exit <strong>$${{tr.exit}}</strong> | PnL: <strong style="color:${{tr.win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</strong> (${{tr.reason}})`;
+                `Highlighted <strong>Trade #${{tr.id}} (${{tr.side}} - ${{tr.lots}}L)</strong>: Entry <strong>$${{tr.entry}}</strong> -> Exit <strong>$${{tr.exit}}</strong> | PnL: <strong style="color:${{tr.win ? '#3fb950' : '#f85149'}};">${{pnlStr}}</strong> (${{tr.reason}})`;
 
             drawChart();
         }}
 
-        resizeCanvas();
+        resizeCanvases();
         setDisplayMode('all');
     </script>
 </body>
@@ -803,7 +925,7 @@ def generate_all_trades_visual(output_file: str = "reports/backtest_visual.html"
     with open(out_path, "w") as f:
         f.write(html)
 
-    print(f"[Visualizer] SUCCESS! Generated TradingView-Style Price Scale Drag Zoom at: {out_path.resolve()}")
+    print(f"[Visualizer] SUCCESS! Rebuilt complete visualizer at: {out_path.resolve()}")
     return str(out_path.resolve())
 
 
