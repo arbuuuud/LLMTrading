@@ -55,6 +55,40 @@ LLMTrading/
 
 ---
 
+## 🚀 Panduan Menjalankan Sistem (How to Run)
+
+Panduan operasional lengkap langkah demi langkah telah didokumentasikan di:
+👉 **[RUNBOOK.md](./RUNBOOK.md)**
+
+### Quickstart Ringkas:
+
+1. **Jalankan Semua Unit Tests (Verifikasi Sistem)**:
+   ```bash
+   .venv/bin/python -m unittest discover tests
+   ```
+
+2. **Jalankan Backtest Strategi Scalping Emas (`XAUUSD_Trend_Pullback_Scalper`)**:
+   ```bash
+   .venv/bin/python tests/test_trend_pullback.py
+   ```
+
+3. **Jalankan Ablation Study (Uji Komparasi Filter)**:
+   ```bash
+   .venv/bin/python strategies/ablation/run_ablation_study.py
+   ```
+
+4. **Jalankan Live Bridge Server ke MetaTrader 5**:
+   - **Mode Paper Trading (Simulasi)**:
+     ```bash
+     .venv/bin/python bridge/server.py
+     ```
+   - **Mode Auto-Trade Riil (Akun Demo MT5)**:
+     ```bash
+     .venv/bin/python bridge/server.py --live
+     ```
+
+---
+
 ## 🔒 Git & Workflow Directive
 
 Setiap kontribusi kode harus mematuhi aturan berikut:
