@@ -37,7 +37,10 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
         start_hour: int = 10,
         start_minute: int = 30,
         end_hour: int = 14,
-        end_minute: int = 30
+        end_minute: int = 30,
+        enable_macro_filter: bool = True,  # H1 EMA 50 Parabolic Protection
+        macro_ema_period: int = 50,
+        parabolic_buffer_dollars: float = 15.0
     ):
         super().__init__("Anchored_VWAP_Mean_Reversion")
         self.band_multiplier = band_multiplier
@@ -46,6 +49,9 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
         self.max_bars_hold = max_bars_hold
         self.start_time = (start_hour, start_minute)
         self.end_time = (end_hour, end_minute)
+        self.enable_macro_filter = enable_macro_filter
+        self.macro_ema_period = macro_ema_period
+        self.parabolic_buffer_dollars = parabolic_buffer_dollars
 
         self.candle_detector = CandlestickPatternDetector()
         self.governor = MonthlyRatchetGovernor(
@@ -55,6 +61,10 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
             monthly_loss_cap_pct=3.0,
             cooldown_bars=25
         )
+
+        # Macro EMA Tracking
+        self.current_h1_bar: Optional[Dict[str, Any]] = None
+        self.current_macro_ema: Optional[float] = None
 
         # VWAP accumulators
         self.current_date: Optional[date] = None
@@ -81,6 +91,31 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
         self.lower_band = 0.0
         self.bars_in_trade = 0
         self.traded_today_count = 0
+        self.current_h1_bar = None
+        self.current_macro_ema = None
+
+    def _update_macro_h1(self, bar: Dict[str, Any]):
+        dt: datetime = bar["timestamp"]
+        h1_time = dt.replace(minute=0, second=0, microsecond=0)
+        if self.current_h1_bar is None or self.current_h1_bar["timestamp"] != h1_time:
+            if self.current_h1_bar is not None:
+                c = self.current_h1_bar["close"]
+                alpha = 2.0 / (self.macro_ema_period + 1.0)
+                if self.current_macro_ema is None:
+                    self.current_macro_ema = c
+                else:
+                    self.current_macro_ema = (c * alpha) + (self.current_macro_ema * (1.0 - alpha))
+            self.current_h1_bar = {
+                "timestamp": h1_time,
+                "open": bar["open"],
+                "high": bar["high"],
+                "low": bar["low"],
+                "close": bar["close"]
+            }
+        else:
+            self.current_h1_bar["high"] = max(self.current_h1_bar["high"], bar["high"])
+            self.current_h1_bar["low"] = min(self.current_h1_bar["low"], bar["low"])
+            self.current_h1_bar["close"] = bar["close"]
 
     def on_trade_closed(self, trade_record):
         self.governor.on_trade_closed(trade_record.net_pnl)
@@ -96,6 +131,9 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
         go = bar["open"]
         vol = max(1.0, float(bar.get("tick_volume", 1)))
         spread = bar.get("mean_spread", 0.20)
+
+        # Update Macro H1 EMA
+        self._update_macro_h1(bar)
 
         # Reset accumulators on new trading day
         if self.current_date != d:
@@ -148,10 +186,21 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
         upper_wick = gh - max(go, gc)
         lower_wick = min(go, gc) - gl
 
+        # Evaluate Macro Trend Protection
+        allow_buy = True
+        allow_sell = True
+        if self.enable_macro_filter and self.current_macro_ema is not None:
+            # If price is extended parabolically above H1 EMA 50, do NOT short into runaway bull rally!
+            if (gc - self.current_macro_ema) > self.parabolic_buffer_dollars:
+                allow_sell = False
+            # If price is extended parabolically below H1 EMA 50, do NOT buy into freefall drop!
+            elif (self.current_macro_ema - gc) > self.parabolic_buffer_dollars:
+                allow_buy = False
+
         # =====================================================================
         # SETUP 1: BEARISH MEAN REVERSION (+2.0 Sigma Overextension)
         # =====================================================================
-        if gh >= self.upper_band and (upper_wick / rng) >= 0.45 and gc < go:
+        if gh >= self.upper_band and (upper_wick / rng) >= 0.45 and gc < go and allow_sell:
             stop = round(gh + self.sl_buffer, 2)
             risk_dist = stop - gc
             if 0.80 <= risk_dist <= 5.00:
@@ -184,7 +233,7 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
         # =====================================================================
         # SETUP 2: BULLISH MEAN REVERSION (-2.0 Sigma Overextension)
         # =====================================================================
-        if gl <= self.lower_band and (lower_wick / rng) >= 0.45 and gc > go:
+        if gl <= self.lower_band and (lower_wick / rng) >= 0.45 and gc > go and allow_buy:
             stop = round(gl - self.sl_buffer, 2)
             risk_dist = gc - stop
             if 0.80 <= risk_dist <= 5.00:

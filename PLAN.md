@@ -45,22 +45,27 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
         *   **Payoff Ratio**: Mencapai **3.92x** (rata-rata win hampir 4x loss).
         *   **Konsistensi**: 6-7 bulan dari 10.5 bulan berprofit bersih dengan Monthly Ratchet Governor.
 
-### **Fase Eksplorasi 5: "Shadow Clone" Automated Multi-Timeframe & Confluence Matrix Explorer**
+### **Fase Eksplorasi 6: Riset Filter Tren Makro EMA (20, 50, 100, 200) & Eliminasi Bulan Merah**
 
 *   **Status**: **SELESAI.**
-*   **Modul & Script**:
-    - `strategies/ablation/shadow_clone_matrix_explorer.py`: Engine paralel yang menyimulasikan 16 konfigurasi Shadow Clone multi-timeframe secara simultan pada data 10.5 bulan.
-    - `reports/shadow_clone_leaderboard.json`: Peta peringkat resmi seluruh strategi.
-*   **Peta Temuan Kunci (The Universal Truths of XAUUSD)**:
-    1.  **VWAP Mean Reversion Wajib di M1 (Golden Window 10:30-14:30 UTC)**:
-        - Mencetak profit absolut terbesar: **+$3,812.27** (PF 1.53, Payoff 4.14x).
-        - Jika dipaksakan ke M5, strategi VWAP hancur (-$1,248, PF 0.77).
-    2.  **SMC & POI Wajib di M15 dengan Bias H1 / H4**:
-        - `Clone-11 (M15 SMC + H4 Bias + 3R)` mencetak Profit Factor tertinggi: **2.99** dengan Win Rate **60.0%** dan Max Drawdown hanya **1.0%**!
-        - `Clone-09 (M15 SMC + H1 Bias + 3R)` menghasilkan **+$588.22** (PF 2.66, Win Rate 50.0%, DD 1.9%).
-        - `Clone-15 (M15 SMC + Fibo 1.618 Extension TP)` menghasilkan **+$503.66** (PF 2.43).
-    3.  **Kombinasi Beracun yang Dihindari Otomatis**:
-        - Sesi pagi London (08:00-11:30 UTC) pada VWAP adalah jebakan manipulasi (-$1,098, DD 23.7%).
-        - SMC pada M5 menghasilkan noise tinggi (PF 1.03).
+*   **Aksi Shadow Clone**:
+    - Script `tests/test_ema_shadow_clones.py` mengerahkan 17 konfigurasi Shadow Clone secara paralel menguji EMA 20, 50, 100, dan 200 pada H1 dan H4.
+    - Menyelidiki fenomena "Losing Months" (September & November 2025 di mana Gold meledak parabolik +$400).
+*   **Temuan Kunci (Breakthrough Results)**:
+    1.  **Rank #1: H1 EMA 50 + Parabolic Buffer $15**:
+        - Net Profit melonjak dari **+$4,043.98 $\rightarrow$ +$4,974.72** (+23% profit lift).
+        - Profit Factor melesat dari **1.49 $\rightarrow$ 2.02**.
+        - Win Rate meningkat dari **27.6% $\rightarrow$ 35.9%**.
+        - Max Drawdown tertekan ke level super aman **5.9%**.
+    2.  **Rank #2: H4 Strict EMA 20 (Trade with Trend)**:
+        - Membalikkan bulan minus menjadi hijau secara spektakuler:
+          * Mei 2025: -$305 $\rightarrow$ **+$99.60**
+          * September 2025: -$348 $\rightarrow$ **+$478.39**
+          * November 2025: -$382 $\rightarrow$ **+$102.45**
+        - Konsistensi bulanan melonjak ke **9 dari 11 bulan profit (82% bulan hijau)**!
+        - Profit Factor **2.41**, Win Rate **39.4%**, Payoff **3.70x**.
+    3.  **Portofolio Gabungan (H4 EMA20 Scalper + Intraday SMC)**:
+        - Net PnL gabungan: **+$4,750.23** (+47.5% ROI pada modal $10k).
+        - Konsistensi: **9 dari 11 bulan profit bersih (82%)**.
 
 ---
