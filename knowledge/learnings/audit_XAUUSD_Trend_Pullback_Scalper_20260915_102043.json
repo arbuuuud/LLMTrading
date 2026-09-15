@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-09-15T10:20:43.008704",
+  "strategy": "XAUUSD_Trend_Pullback_Scalper",
+  "status_recommendation": "KEEP_ACTIVE",
+  "metrics": {
+    "total_trades": 135,
+    "net_pnl": 119.59,
+    "actual_max_dd": 2.09,
+    "expected_mc_p95_dd": 3.96
+  },
+  "learnings": [
+    "Strategy performing in line with institutional expectations (PF: 1.11, DD: 2.09% vs MC P95: 3.96%)."
+  ]
+}
