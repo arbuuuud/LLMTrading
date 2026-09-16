@@ -218,12 +218,11 @@ string ReadIncoming()
       return "";
 
    uchar buffer[];
-   ArrayResize(buffer, readable + 1);
+   ArrayResize(buffer, readable + 32);
    int received = SocketRead(m_socket, buffer, readable, InpTimeoutMs);
    if(received > 0)
    {
-      buffer[received] = 0;
-      return CharArrayToString(buffer);
+      return CharArrayToString(buffer, 0, received, CP_UTF8);
    }
    return "";
 }
