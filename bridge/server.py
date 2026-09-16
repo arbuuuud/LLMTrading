@@ -527,8 +527,9 @@ class LiveBridgeServer:
             if self.client_writer:
                 try:
                     self.client_writer.write((json.dumps({"action": "SYNC_BARS"}) + "\n").encode("utf-8"))
-                except Exception:
-                    pass
+                    await self.client_writer.drain()
+                except Exception as e:
+                    logger.debug(f"[Bridge] Error sending SYNC_BARS: {e}")
             self._save_radar_state()
 
         elif msg_type == "BAR_SYNC":

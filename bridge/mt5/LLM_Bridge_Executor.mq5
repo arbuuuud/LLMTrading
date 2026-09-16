@@ -89,6 +89,7 @@ bool ConnectToServer()
 
    m_connected = true;
    PrintFormat("[LLM Bridge] CONNECTED SUCCESSFULLY to Python Brain at %s:%d!", InpServerHost, InpServerPort);
+   Sleep(50); // Allow OS/Wine socket buffers to settle before first send
 
    // Send Registration Handshake with Account Details
    string regJson = StringFormat(
@@ -188,14 +189,20 @@ bool SendString(string data)
    if(len <= 0)
       return false;
 
-   int sent = SocketSend(m_socket, buffer, len);
-   if(sent != len)
+   int sent = 0;
+   int attempts = 0;
+   while(attempts < 3)
    {
-      PrintFormat("[LLM Bridge] SocketSend failed. Sent %d of %d bytes. Error: %d", sent, len, GetLastError());
-      DisconnectServer();
-      return false;
+      sent = SocketSend(m_socket, buffer, len);
+      if(sent == len)
+         return true;
+      attempts++;
+      Sleep(30);
    }
-   return true;
+
+   PrintFormat("[LLM Bridge] SocketSend failed after 3 attempts. Sent %d of %d bytes. Error: %d", sent, len, GetLastError());
+   DisconnectServer();
+   return false;
 }
 
 //+------------------------------------------------------------------+
