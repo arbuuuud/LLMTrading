@@ -249,10 +249,10 @@ def _build_fallback_radar():
             "dist_demand_pips": 120.0,
             "dist_supply_pips": 150.0,
             "checklist": [
-                {"label": "Unfilled Order Base (NFC)", "ok": True, "val": "Demand Base identified @ 120 pips"},
-                {"label": "Zone Retest & Mitigation", "ok": False, "val": "Nearest Demand: 120.0 pips away"},
-                {"label": "H1 EMA 50 Macro Direction", "ok": True, "val": "Aligned with Higher Timeframe Trend"},
-                {"label": "M15 Pinbar / Engulfing Trigger", "ok": False, "val": "Waiting for mitigation retest confirmation"}
+                {"label": "Skeptical UFO Base (NFC v2)", "ok": True, "val": "RBR Demand Base (Score: 75pts)"},
+                {"label": "Zone Retest & Proximity", "ok": False, "val": "Nearest Demand: 120.0 pips away"},
+                {"label": "Market Auction Valuation", "ok": True, "val": "Discount for Buy / Premium for Sell (New Normal)"},
+                {"label": "M15 Rejection Wick Trigger", "ok": False, "val": "Waiting for bar-close confirmation"}
             ]
         },
         "bars_m1": bars_m1,
