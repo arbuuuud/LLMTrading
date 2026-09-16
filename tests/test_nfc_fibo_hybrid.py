@@ -62,6 +62,45 @@ class NFCFiboHybridStrategy(BaseStrategy):
         t = dt.replace(minute=0, second=0, microsecond=0)
         return h1_map.get(t, None)
 
+    def update_zones_only(self, bar):
+        """
+        Updates internal M15 bar history and detects DBR/RBD supply/demand zones
+        without evaluating trade entry triggers.
+        Used for Historical Catch-Up Sync on reconnect.
+        """
+        self.bars.append(bar)
+        if len(self.bars) > 60:
+            self.bars.pop(0)
+
+        # Detect DBR / RBD
+        if len(self.bars) >= 5:
+            b_drop = self.bars[-4]
+            b_base = self.bars[-3]
+            b_rally = self.bars[-1]
+
+            # DBR
+            if (b_drop["close"] < b_drop["open"]) and (b_rally["close"] > b_rally["open"]):
+                rally_body = b_rally["close"] - b_rally["open"]
+                base_range = b_base["high"] - b_base["low"]
+                if rally_body > base_range * 1.5 and rally_body > 2.5:
+                    self.demand_zones.append({
+                        "top": b_base["high"], "bottom": b_base["low"],
+                        "created_at": b_base["timestamp"], "mitigated": False
+                    })
+
+            # RBD
+            if (b_drop["close"] > b_drop["open"]) and (b_rally["close"] < b_rally["open"]):
+                drop_body = b_rally["open"] - b_rally["close"]
+                base_range = b_base["high"] - b_base["low"]
+                if drop_body > base_range * 1.5 and drop_body > 2.5:
+                    self.supply_zones.append({
+                        "top": b_base["high"], "bottom": b_base["low"],
+                        "created_at": b_base["timestamp"], "mitigated": False
+                    })
+
+            if len(self.demand_zones) > 20: self.demand_zones = self.demand_zones[-20:]
+            if len(self.supply_zones) > 20: self.supply_zones = self.supply_zones[-20:]
+
     def on_bar(self, bar):
         dt = bar["timestamp"]
         d = dt.date()

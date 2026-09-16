@@ -64,8 +64,8 @@ class MultiTimeframeBarAggregator:
 
         self.history_m1: List[Dict[str, Any]] = []
         self.history_m15: List[Dict[str, Any]] = []
-        self.max_history_m1: int = 150
-        self.max_history_m15: int = 60
+        self.max_history_m1: int = 500
+        self.max_history_m15: int = 120
         self._preload_history()
 
     def _preload_history(self):
@@ -107,6 +107,59 @@ class MultiTimeframeBarAggregator:
                     })
         except Exception as e:
             logger.debug(f"[Aggregator] Preload history skipped: {e}")
+
+    def ingest_historical_bars(self, bars: List[Dict[str, Any]], symbol: str = "XAUUSD") -> int:
+        """
+        Merges historical M1 bars received from MT5 BAR_SYNC into history_m1,
+        deduplicating by timestamp and keeping strict chronological order.
+        """
+        bar_map = {int(b["timestamp"].timestamp()): b for b in self.history_m1}
+        for item in bars:
+            ts_sec = int(item["time"] / 1000)
+            dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+            bar_map[ts_sec] = {
+                "symbol": symbol,
+                "timestamp": dt,
+                "open": float(item["open"]),
+                "high": float(item["high"]),
+                "low": float(item["low"]),
+                "close": float(item["close"]),
+                "mean_spread": float(item.get("spread", 0.20)),
+                "tick_volume": int(item.get("volume", 1))
+            }
+        sorted_keys = sorted(bar_map.keys())
+        self.history_m1 = [bar_map[k] for k in sorted_keys[-self.max_history_m1:]]
+        return len(bars)
+
+    def rebuild_m15_history(self):
+        """
+        Reconstructs M15 bars from current history_m1 bars after historical catch-up sync.
+        """
+        m15_dict = {}
+        for m1 in self.history_m1:
+            dt = m1["timestamp"]
+            m15_min = (dt.minute // 15) * 15
+            bucket = dt.replace(minute=m15_min, second=0, microsecond=0)
+            bucket_sec = int(bucket.timestamp())
+            if bucket_sec not in m15_dict:
+                m15_dict[bucket_sec] = {
+                    "symbol": m1["symbol"],
+                    "timestamp": bucket,
+                    "open": m1["open"],
+                    "high": m1["high"],
+                    "low": m1["low"],
+                    "close": m1["close"],
+                    "mean_spread": m1["mean_spread"],
+                    "tick_volume": m1["tick_volume"]
+                }
+            else:
+                m15_dict[bucket_sec]["high"] = max(m15_dict[bucket_sec]["high"], m1["high"])
+                m15_dict[bucket_sec]["low"] = min(m15_dict[bucket_sec]["low"], m1["low"])
+                m15_dict[bucket_sec]["close"] = m1["close"]
+                m15_dict[bucket_sec]["tick_volume"] += m1["tick_volume"]
+
+        sorted_m15 = sorted(m15_dict.keys())
+        self.history_m15 = [m15_dict[k] for k in sorted_m15[-self.max_history_m15:]]
 
     def process_tick(
         self,
@@ -465,6 +518,9 @@ class LiveBridgeServer:
             self.get_governor_for_account(acc_id)
             self._save_radar_state()
 
+        elif msg_type == "BAR_SYNC":
+            await self._handle_bar_sync(msg)
+
         elif msg_type == "TICK":
             await self._handle_tick(msg)
         elif msg_type == "ORDER_RECEIPT":
@@ -474,6 +530,51 @@ class LiveBridgeServer:
                 f"Ticket: {msg.get('ticket')} | Magic: {msg.get('magic')} | Price: {msg.get('price')}"
             )
             self._save_radar_state()
+
+    async def _handle_bar_sync(self, msg: Dict[str, Any]):
+        """
+        Processes historical M1 bars sent by MT5 on connect/reconnect.
+        Re-accumulates VWAP and updates higher-timeframe structures without firing trade signals.
+        """
+        bars = msg.get("bars", [])
+        if not bars:
+            return
+
+        batch = msg.get("batch", 1)
+        total = msg.get("total", 1)
+        symbol = msg.get("symbol", "XAUUSD")
+
+        # Ingest bars into aggregator history
+        self.aggregator.ingest_historical_bars(bars, symbol)
+
+        # Update scalper VWAP and H1 EMA
+        for b in bars:
+            dt = datetime.fromtimestamp(b["time"] / 1000.0, tz=timezone.utc)
+            bar_dict = {
+                "symbol": symbol,
+                "timestamp": dt,
+                "open": float(b["open"]),
+                "high": float(b["high"]),
+                "low": float(b["low"]),
+                "close": float(b["close"]),
+                "mean_spread": float(b.get("spread", 0.20)),
+                "tick_volume": int(b.get("volume", 1))
+            }
+            self.scalper_strategy.update_indicators_only(bar_dict)
+
+        logger.info(
+            f"📥 [BAR SYNC] Batch {batch}/{total} ingested ({len(bars)} M1 bars). "
+            f"VWAP re-anchored: ${self.scalper_strategy.current_vwap:.2f} "
+            f"(±1.8σ: ${self.scalper_strategy.lower_band:.2f} - ${self.scalper_strategy.upper_band:.2f})"
+        )
+
+        if batch >= total:
+            # Reconstruct M15 history and update NFC zones
+            self.aggregator.rebuild_m15_history()
+            for m15_b in self.aggregator.history_m15[-40:]:
+                self.intraday_strategy.update_zones_only(m15_b)
+            self._save_radar_state()
+            logger.info(f"✅ [BAR SYNC COMPLETE] Successfully reconciled {len(self.aggregator.history_m1)} M1 bars & {len(self.aggregator.history_m15)} M15 bars. State fully aligned!")
 
     async def _handle_tick(self, tick: Dict[str, Any]):
         self.latest_tick = tick

@@ -187,6 +187,95 @@ class TestLiveBridge(unittest.TestCase):
 
         asyncio.run(run_resilience_test())
 
+    def test_historical_bar_sync_reconciliation(self):
+        """
+        Tests that when MT5 reconnects after being disconnected for hours,
+        it sends BAR_SYNC batches which re-anchor VWAP and update M15 structures
+        without emitting false trade signals.
+        """
+        async def run_sync_test():
+            server = LiveBridgeServer(host="127.0.0.1", port=5560, dry_run=True)
+            server_task = asyncio.create_task(server.start())
+            await asyncio.sleep(0.2)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", 5560)
+
+            # 1. Send Handshake
+            reg = {
+                "type": "REGISTER",
+                "account_id": "10001",
+                "symbol": "XAUUSD",
+                "company": "ICMarkets",
+                "currency": "USD",
+                "balance": 10000.0,
+                "equity": 10000.0
+            }
+            writer.write((json.dumps(reg) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            # 2. Simulate MT5 sending 60 historical M1 bars (1 hour of missed market data)
+            t0 = 1748342400000  # 10:40 UTC
+            sync_bars = []
+            for i in range(60):
+                p = 4340.0 + (i * 0.1)
+                sync_bars.append({
+                    "time": t0 + (i * 60000),
+                    "open": round(p, 2),
+                    "high": round(p + 0.5, 2),
+                    "low": round(p - 0.3, 2),
+                    "close": round(p + 0.2, 2),
+                    "volume": 250 + i,
+                    "spread": 0.20
+                })
+
+            sync_payload = {
+                "type": "BAR_SYNC",
+                "symbol": "XAUUSD",
+                "batch": 1,
+                "total": 1,
+                "bars": sync_bars
+            }
+            writer.write((json.dumps(sync_payload) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.3)
+
+            # 3. Assert VWAP and indicators are re-anchored
+            self.assertGreater(server.scalper_strategy.current_vwap, 4300.0)
+            self.assertGreater(server.scalper_strategy.upper_band, server.scalper_strategy.current_vwap)
+            self.assertLess(server.scalper_strategy.lower_band, server.scalper_strategy.current_vwap)
+
+            # Ensure no rogue trades were executed during catch-up
+            self.assertEqual(len(server.scalper_adapter.positions), 0)
+
+            # 4. Stream next live tick seamlessly
+            next_tick = {
+                "type": "TICK",
+                "account_id": "10001",
+                "symbol": "XAUUSD",
+                "bid": 4346.20,
+                "ask": 4346.40,
+                "spread": 0.20,
+                "time": t0 + (60 * 60000) + 15000,
+                "equity": 10000.0,
+                "balance": 10000.0,
+                "open_positions": 0
+            }
+            writer.write((json.dumps(next_tick) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.2)
+
+            self.assertEqual(server.latest_tick["bid"], 4346.20)
+            print(f"\n[Test Result] VWAP after historical catch-up: ${server.scalper_strategy.current_vwap:.2f}")
+            print(f"[Test Result] Upper Band: ${server.scalper_strategy.upper_band:.2f} | Lower: ${server.scalper_strategy.lower_band:.2f}")
+
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+            server_task.cancel()
+
+        asyncio.run(run_sync_test())
+
 
 if __name__ == "__main__":
     unittest.main()

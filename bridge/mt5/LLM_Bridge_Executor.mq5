@@ -18,6 +18,8 @@ input string   InpServerHost     = "127.0.0.1";  // Python Brain Host IP
 input int      InpServerPort     = 5555;         // Python Brain Port
 input int      InpTimeoutMs      = 3000;         // Socket Timeout (ms)
 input ulong    InpDeviationPoints= 20;           // Max Slippage Deviation (points)
+input ulong    InpMagicNumber    = 1001;         // Default Expert Magic Number
+input int      InpSyncBars       = 360;          // Historical Bars to Sync on Reconnect (Default: 360 = 6 hours)
 input group "=== Note: Risk Management is 100% Handled via Dashboard ==="
 
 //--- GLOBAL VARIABLES
@@ -95,7 +97,69 @@ bool ConnectToServer()
       m_account.Balance(), m_account.Equity()
    );
    SendString(regJson);
+
+   // Reconcile and catch up historical bars on connect/reconnect
+   SyncHistoricalBars();
    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Synchronize Historical M1 Bars to Python Brain on Reconnect      |
+//+------------------------------------------------------------------+
+void SyncHistoricalBars()
+{
+   if(!m_connected || m_socket == INVALID_HANDLE)
+      return;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false); // rates[0] is oldest, rates[copied-1] is newest
+   int copied = CopyRates(_Symbol, PERIOD_M1, 1, InpSyncBars, rates);
+   if(copied <= 0)
+   {
+      PrintFormat("[LLM Bridge] Historical sync skipped. CopyRates returned %d. Error: %d", copied, GetLastError());
+      return;
+   }
+
+   PrintFormat("[LLM Bridge] Synchronizing %d historical M1 bars with Python Brain...", copied);
+
+   int chunkSize = 60; // 60 bars per batch (~4-5 KB per chunk)
+   int totalBatches = (copied + chunkSize - 1) / chunkSize;
+
+   for(int b = 0; b < totalBatches; b++)
+   {
+      int startIdx = b * chunkSize;
+      int endIdx = MathMin(startIdx + chunkSize, copied);
+
+      string barsJson = "";
+      for(int i = startIdx; i < endIdx; i++)
+      {
+         long barTimeMs = (long)rates[i].time * 1000;
+         double spread = (rates[i].spread > 0) ? (rates[i].spread * _Point) : 0.20;
+         long vol = (rates[i].tick_volume > 0) ? rates[i].tick_volume : 1;
+
+         string item = StringFormat(
+            "{\"time\":%I64d,\"open\":%.2f,\"high\":%.2f,\"low\":%.2f,\"close\":%.2f,\"volume\":%I64d,\"spread\":%.2f}",
+            barTimeMs, rates[i].open, rates[i].high, rates[i].low, rates[i].close, vol, spread
+         );
+
+         if(barsJson != "")
+            barsJson += ",";
+         barsJson += item;
+      }
+
+      string payload = StringFormat(
+         "{\"type\":\"BAR_SYNC\",\"symbol\":\"%s\",\"batch\":%d,\"total\":%d,\"bars\":[%s]}\n",
+         _Symbol, b + 1, totalBatches, barsJson
+      );
+
+      if(!SendString(payload))
+      {
+         PrintFormat("[LLM Bridge] Failed to send BAR_SYNC batch %d/%d", b + 1, totalBatches);
+         break;
+      }
+   }
+
+   PrintFormat("[LLM Bridge] Historical sync complete! Sent %d bars across %d batches.", copied, totalBatches);
 }
 
 //+------------------------------------------------------------------+
@@ -268,14 +332,15 @@ void OnTick()
    double spread = ask - bid;
    long   timeMs = (long)TimeCurrent() * 1000;
 
-   // Count open positions for our Magic Number
+   // Count open positions for our dual engines (1001 Scalp / 2001 Intraday)
    int openCount = 0;
    double totalUnrealized = 0.0;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       if(m_position.SelectByIndex(i))
       {
-         if(m_position.Magic() == InpMagicNumber && m_position.Symbol() == _Symbol)
+         ulong posMagic = m_position.Magic();
+         if((posMagic == 1001 || posMagic == 2001 || posMagic == InpMagicNumber) && m_position.Symbol() == _Symbol)
          {
             openCount++;
             totalUnrealized += m_position.Profit();
