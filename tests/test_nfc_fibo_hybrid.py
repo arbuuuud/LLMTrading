@@ -22,6 +22,7 @@ from engine.metrics.performance import PerformanceCalculator
 from engine.core.strategy_base import BaseStrategy
 from agents.risk_manager.monthly_ratchet_governor import MonthlyRatchetGovernor
 from strategies.modules.setups.fibonacci_confluence import FibonacciCalculator
+from strategies.modules.setups.skeptical_ufo_detector import SkepticalUFODetector, UFOType, ZoneQuality
 
 df_m15 = pl.read_parquet("data/processed/bars/XAUUSD/HTF/XAUUSD_M15.parquet")
 df_h1 = pl.read_parquet("data/processed/bars/XAUUSD/HTF/XAUUSD_H1.parquet")
@@ -38,23 +39,35 @@ h1_map = {
 
 
 class NFCFiboHybridStrategy(BaseStrategy):
-    def __init__(self, rr_target=3.0, use_macro_ema=True, use_fibo_ote=True):
-        super().__init__(f"NFC_Fibo_RR{rr_target}")
+    def __init__(self, rr_target=2.5, use_macro_ema=True, use_fibo_ote=False, min_score=35):
+        super().__init__(f"NFC_UFO_RR{rr_target}")
         self.rr_target = rr_target
         self.use_macro_ema = use_macro_ema
         self.use_fibo_ote = use_fibo_ote
-        self.governor = MonthlyRatchetGovernor(base_risk_pct=0.5, greed_risk_pct=0.25, max_daily_loss_pct=1.0, monthly_loss_cap_pct=3.0, cooldown_bars=8)
-
+        self.min_score = min_score
+        self.governor = MonthlyRatchetGovernor(
+            base_risk_pct=0.5, greed_risk_pct=0.25, max_daily_loss_pct=1.0, monthly_loss_cap_pct=3.0, cooldown_bars=8
+        )
+        self.detector = SkepticalUFODetector(
+            min_score_threshold=min_score,
+            max_base_bars=3,
+            min_departure_ratio=1.6
+        )
         self.bars = []
-        self.demand_zones = []
-        self.supply_zones = []
         self.current_date = None
         self.traded_today = 0
 
+    @property
+    def demand_zones(self):
+        return self.detector.demand_zones
+
+    @property
+    def supply_zones(self):
+        return self.detector.supply_zones
+
     def on_init(self):
         self.bars.clear()
-        self.demand_zones.clear()
-        self.supply_zones.clear()
+        self.detector.reset()
         self.current_date = None
         self.traded_today = 0
 
@@ -64,42 +77,14 @@ class NFCFiboHybridStrategy(BaseStrategy):
 
     def update_zones_only(self, bar):
         """
-        Updates internal M15 bar history and detects DBR/RBD supply/demand zones
+        Updates internal M15 bar history and detects DBR/RBR/RBD/DBD supply/demand zones
         without evaluating trade entry triggers.
         Used for Historical Catch-Up Sync on reconnect.
         """
         self.bars.append(bar)
         if len(self.bars) > 60:
             self.bars.pop(0)
-
-        # Detect DBR / RBD
-        if len(self.bars) >= 5:
-            b_drop = self.bars[-4]
-            b_base = self.bars[-3]
-            b_rally = self.bars[-1]
-
-            # DBR
-            if (b_drop["close"] < b_drop["open"]) and (b_rally["close"] > b_rally["open"]):
-                rally_body = b_rally["close"] - b_rally["open"]
-                base_range = b_base["high"] - b_base["low"]
-                if rally_body > base_range * 1.5 and rally_body > 2.5:
-                    self.demand_zones.append({
-                        "top": b_base["high"], "bottom": b_base["low"],
-                        "created_at": b_base["timestamp"], "mitigated": False
-                    })
-
-            # RBD
-            if (b_drop["close"] > b_drop["open"]) and (b_rally["close"] < b_rally["open"]):
-                drop_body = b_rally["open"] - b_rally["close"]
-                base_range = b_base["high"] - b_base["low"]
-                if drop_body > base_range * 1.5 and drop_body > 2.5:
-                    self.supply_zones.append({
-                        "top": b_base["high"], "bottom": b_base["low"],
-                        "created_at": b_base["timestamp"], "mitigated": False
-                    })
-
-            if len(self.demand_zones) > 20: self.demand_zones = self.demand_zones[-20:]
-            if len(self.supply_zones) > 20: self.supply_zones = self.supply_zones[-20:]
+        self.detector.update(bar)
 
     def on_bar(self, bar):
         dt = bar["timestamp"]
@@ -118,34 +103,8 @@ class NFCFiboHybridStrategy(BaseStrategy):
 
         self.governor.on_new_bar(dt, self.engine.equity)
 
-        # Detect DBR / RBD
-        if len(self.bars) >= 5:
-            b_drop = self.bars[-4]
-            b_base = self.bars[-3]
-            b_rally = self.bars[-1]
-
-            # DBR
-            if (b_drop["close"] < b_drop["open"]) and (b_rally["close"] > b_rally["open"]):
-                rally_body = b_rally["close"] - b_rally["open"]
-                base_range = b_base["high"] - b_base["low"]
-                if rally_body > base_range * 1.5 and rally_body > 2.5:
-                    self.demand_zones.append({
-                        "top": b_base["high"], "bottom": b_base["low"],
-                        "created_at": b_base["timestamp"], "mitigated": False
-                    })
-
-            # RBD
-            if (b_drop["close"] > b_drop["open"]) and (b_rally["close"] < b_rally["open"]):
-                drop_body = b_rally["open"] - b_rally["close"]
-                base_range = b_base["high"] - b_base["low"]
-                if drop_body > base_range * 1.5 and drop_body > 2.5:
-                    self.supply_zones.append({
-                        "top": b_base["high"], "bottom": b_base["low"],
-                        "created_at": b_base["timestamp"], "mitigated": False
-                    })
-
-            if len(self.demand_zones) > 20: self.demand_zones = self.demand_zones[-20:]
-            if len(self.supply_zones) > 20: self.supply_zones = self.supply_zones[-20:]
+        # Update Skeptical UFO Detector
+        self.detector.update(bar)
 
         if len(self.engine.positions) > 0:
             if t.hour >= 21 and t.minute >= 30:
@@ -160,59 +119,39 @@ class NFCFiboHybridStrategy(BaseStrategy):
         h1 = self._get_h1(dt)
         is_bull_macro = True
         is_bear_macro = True
-        fibo = None
-
         if h1 is not None and self.use_macro_ema:
             c_h1 = h1["close"]
             ema_h1 = h1["ema50"]
             is_bull_macro = (c_h1 >= ema_h1)
             is_bear_macro = (c_h1 <= ema_h1)
 
-        # Fibo on recent 20 M15 bars
-        if len(self.bars) >= 20 and self.use_fibo_ote:
-            recent_h = max(b["high"] for b in self.bars[-20:])
-            recent_l = min(b["low"] for b in self.bars[-20:])
-            if is_bull_macro:
-                fibo = FibonacciCalculator.compute_bullish_fibo(recent_l, recent_h)
-            elif is_bear_macro:
-                fibo = FibonacciCalculator.compute_bearish_fibo(recent_h, recent_l)
-
-        # Retest Demand (BUY)
+        # Retest Demand (BUY AT DISCOUNT)
         if is_bull_macro:
-            for z in reversed(self.demand_zones):
-                if not z["mitigated"] and (z["bottom"] - 0.5) <= gl <= (z["top"] + 0.5) and gc > go:
-                    # Fibo check
-                    if self.use_fibo_ote and fibo:
-                        if not FibonacciCalculator.is_in_golden_pocket(gl, fibo, buffer=0.60):
-                            continue
-
-                    z["mitigated"] = True
-                    sl = round(z["bottom"] - 1.20, 2)
+            for z in reversed(self.detector.demand_zones):
+                if not z.mitigated and (z.bottom - 0.50) <= gl <= (z.top + 0.50) and gc > go:
+                    z.mitigated = True
+                    sl = round(z.bottom - 1.00, 2)
                     risk = gc - sl
-                    if 1.50 <= risk <= 6.50:
+                    if 1.20 <= risk <= 6.50:
                         tp = round(gc + risk * self.rr_target, 2)
                         approval = self.governor.evaluate_entry(gc, sl, spread, 0.35, len(self.engine.positions))
                         if approval.approved:
-                            self.engine.buy("XAUUSD", approval.lots, sl, tp, comment="NFC_Fibo_Buy")
+                            self.engine.buy("XAUUSD", approval.lots, sl, tp, comment=f"UFO_{z.zone_type.name}")
                             self.traded_today += 1
                             return
 
-        # Retest Supply (SELL)
+        # Retest Supply (SELL AT PREMIUM)
         if is_bear_macro:
-            for z in reversed(self.supply_zones):
-                if not z["mitigated"] and (z["bottom"] - 0.5) <= gh <= (z["top"] + 0.5) and gc < go:
-                    if self.use_fibo_ote and fibo:
-                        if not FibonacciCalculator.is_in_golden_pocket(gh, fibo, buffer=0.60):
-                            continue
-
-                    z["mitigated"] = True
-                    sl = round(z["top"] + 1.20, 2)
+            for z in reversed(self.detector.supply_zones):
+                if not z.mitigated and (z.bottom - 0.50) <= gh <= (z.top + 0.50) and gc < go:
+                    z.mitigated = True
+                    sl = round(z.top + 1.00, 2)
                     risk = sl - gc
-                    if 1.50 <= risk <= 6.50:
+                    if 1.20 <= risk <= 6.50:
                         tp = round(gc - risk * self.rr_target, 2)
                         approval = self.governor.evaluate_entry(gc, sl, spread, 0.35, len(self.engine.positions))
                         if approval.approved:
-                            self.engine.sell("XAUUSD", approval.lots, sl, tp, comment="NFC_Fibo_Sell")
+                            self.engine.sell("XAUUSD", approval.lots, sl, tp, comment=f"UFO_{z.zone_type.name}")
                             self.traded_today += 1
                             return
 

@@ -3032,10 +3032,22 @@
             const elE2SupLvl = document.getElementById('e2-supply-level');
             const elE2SupDist = document.getElementById('e2-supply-dist');
 
-            if (elE2DemLvl && e2.nearest_demand) elE2DemLvl.innerText = `$${e2.nearest_demand.bottom || 0} - $${e2.nearest_demand.top || 0}`;
-            if (elE2DemDist && e2.dist_demand_pips !== undefined) elE2DemDist.innerText = `${e2.dist_demand_pips} pips away`;
-            if (elE2SupLvl && e2.nearest_supply) elE2SupLvl.innerText = `$${e2.nearest_supply.bottom || 0} - $${e2.nearest_supply.top || 0}`;
-            if (elE2SupDist && e2.dist_supply_pips !== undefined) elE2SupDist.innerText = `${e2.dist_supply_pips} pips away`;
+            if (elE2DemLvl && e2.nearest_demand) {
+                const typeText = e2.nearest_demand.type_short || 'DEMAND';
+                const scoreText = e2.nearest_demand.score ? ` [${e2.nearest_demand.score}pts]` : '';
+                elE2DemLvl.innerText = `$${e2.nearest_demand.bottom || 0} - $${e2.nearest_demand.top || 0}`;
+                if (elE2DemDist && e2.dist_demand_pips !== undefined) {
+                    elE2DemDist.innerText = `${typeText}${scoreText} • ${e2.dist_demand_pips} pips away`;
+                }
+            }
+            if (elE2SupLvl && e2.nearest_supply) {
+                const typeText = e2.nearest_supply.type_short || 'SUPPLY';
+                const scoreText = e2.nearest_supply.score ? ` [${e2.nearest_supply.score}pts]` : '';
+                elE2SupLvl.innerText = `$${e2.nearest_supply.bottom || 0} - $${e2.nearest_supply.top || 0}`;
+                if (elE2SupDist && e2.dist_supply_pips !== undefined) {
+                    elE2SupDist.innerText = `${typeText}${scoreText} • ${e2.dist_supply_pips} pips away`;
+                }
+            }
 
             // Checklist E2
             const elE2Checks = document.getElementById('e2-checklist-container');

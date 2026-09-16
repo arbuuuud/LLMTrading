@@ -760,6 +760,55 @@ class LiveBridgeServer:
         curr_hour = now_utc.hour
         curr_min = now_utc.minute
 
+        # Prepare bars_m1 and bars_m15
+        bars_m1 = []
+        cum_vol = 0.0
+        cum_pv = 0.0
+        cum_p2v = 0.0
+
+        bar_dict = {}
+        for b in self.aggregator.history_m1:
+            ts = int(b["timestamp"].timestamp())
+            bar_dict[ts] = b
+
+        sorted_ts = sorted(bar_dict.keys())
+        for ts in sorted_ts[-120:]:
+            b = bar_dict[ts]
+            o = round(b["open"], 2)
+            h = round(b["high"], 2)
+            l = round(b["low"], 2)
+            c = round(b["close"], 2)
+            vol = max(1.0, float(b.get("tick_volume", 1)))
+            tp = (h + l + c) / 3.0
+            cum_vol += vol
+            cum_pv += tp * vol
+            cum_p2v += (tp ** 2) * vol
+            v = cum_pv / cum_vol
+            s = math.sqrt(max(0.0, (cum_p2v / cum_vol) - (v ** 2)))
+            bars_m1.append({
+                "time": ts,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": int(vol),
+                "vwap": round(v, 2),
+                "upper": round(v + 1.8 * s, 2),
+                "lower": round(v - 1.8 * s, 2)
+            })
+
+        bars_m15 = []
+        for b in self.aggregator.history_m15[-60:]:
+            ts = int(b["timestamp"].timestamp())
+            bars_m15.append({
+                "time": ts,
+                "open": round(b["open"], 2),
+                "high": round(b["high"], 2),
+                "low": round(b["low"], 2),
+                "close": round(b["close"], 2),
+                "volume": int(b.get("tick_volume", 1))
+            })
+
         # Scalper Engine 1 Status
         vwap = round(getattr(self.scalper_strategy, "current_vwap", 0.0), 2)
         std = round(getattr(self.scalper_strategy, "current_std", 0.0), 2)
@@ -860,66 +909,29 @@ class LiveBridgeServer:
         demand_zones = getattr(self.intraday_strategy, "demand_zones", [])
         supply_zones = getattr(self.intraday_strategy, "supply_zones", [])
 
-        nearest_demand = demand_zones[-1] if demand_zones else None
-        nearest_supply = supply_zones[-1] if supply_zones else None
+        nearest_demand_obj = demand_zones[-1] if demand_zones else None
+        nearest_supply_obj = supply_zones[-1] if supply_zones else None
+
+        nearest_demand = nearest_demand_obj.to_dict() if (nearest_demand_obj and hasattr(nearest_demand_obj, "to_dict")) else nearest_demand_obj
+        nearest_supply = nearest_supply_obj.to_dict() if (nearest_supply_obj and hasattr(nearest_supply_obj, "to_dict")) else nearest_supply_obj
 
         dist_demand_pips = round((mid - nearest_demand["top"]) * 10, 1) if (nearest_demand and mid > nearest_demand.get("top", 0)) else 0.0
         dist_supply_pips = round((nearest_supply["bottom"] - mid) * 10, 1) if (nearest_supply and nearest_supply.get("bottom", 0) > mid) else 0.0
 
+        ufo_label = ""
+        if nearest_demand and nearest_demand.get("score"):
+            ufo_label = f"Demand: {nearest_demand.get('type_short', 'BASE')} (Score {nearest_demand.get('score', 0)})"
+        elif nearest_supply and nearest_supply.get("score"):
+            ufo_label = f"Supply: {nearest_supply.get('type_short', 'BASE')} (Score {nearest_supply.get('score', 0)})"
+        else:
+            ufo_label = f"{len(demand_zones)} Demand / {len(supply_zones)} Supply Bases"
+
         e2_checklist = [
-            {"label": "Unfilled Order Base (NFC)", "ok": bool(nearest_demand or nearest_supply), "val": f"{len(demand_zones)} Demand / {len(supply_zones)} Supply Bases"},
-            {"label": "Zone Retest & Mitigation", "ok": False, "val": f"Nearest Demand: {dist_demand_pips} pips away" if nearest_demand else "Waiting for price to mitigate zone"},
-            {"label": "H1 EMA 50 Macro Direction", "ok": True, "val": "Aligned with Higher Timeframe Trend"},
-            {"label": "M15 Pinbar / Engulfing Trigger", "ok": False, "val": "Waiting for mitigation retest confirmation"}
+            {"label": "Skeptical UFO Base (NFC v2)", "ok": bool(nearest_demand or nearest_supply), "val": ufo_label},
+            {"label": "Zone Retest & Proximity", "ok": False, "val": f"Nearest Demand: {dist_demand_pips} pips away" if nearest_demand else "Waiting for mitigation retest"},
+            {"label": "Market Auction Valuation", "ok": True, "val": "Discount for Buy / Premium for Sell (New Normal)"},
+            {"label": "M15 Rejection Wick Trigger", "ok": False, "val": "Waiting for bar-close confirmation"}
         ]
-
-        bars_m1 = []
-        cum_vol = 0.0
-        cum_pv = 0.0
-        cum_p2v = 0.0
-
-        bar_dict = {}
-        for b in self.aggregator.history_m1:
-            ts = int(b["timestamp"].timestamp())
-            bar_dict[ts] = b
-
-        sorted_ts = sorted(bar_dict.keys())
-        for ts in sorted_ts[-120:]:
-            b = bar_dict[ts]
-            o = round(b["open"], 2)
-            h = round(b["high"], 2)
-            l = round(b["low"], 2)
-            c = round(b["close"], 2)
-            vol = max(1.0, float(b.get("tick_volume", 1)))
-            tp = (h + l + c) / 3.0
-            cum_vol += vol
-            cum_pv += tp * vol
-            cum_p2v += (tp ** 2) * vol
-            v = cum_pv / cum_vol
-            s = math.sqrt(max(0.0, (cum_p2v / cum_vol) - (v ** 2)))
-            bars_m1.append({
-                "time": ts,
-                "open": o,
-                "high": h,
-                "low": l,
-                "close": c,
-                "volume": int(vol),
-                "vwap": round(v, 2),
-                "upper": round(v + 1.8 * s, 2),
-                "lower": round(v - 1.8 * s, 2)
-            })
-
-        bars_m15 = []
-        for b in self.aggregator.history_m15[-60:]:
-            ts = int(b["timestamp"].timestamp())
-            bars_m15.append({
-                "time": ts,
-                "open": round(b["open"], 2),
-                "high": round(b["high"], 2),
-                "low": round(b["low"], 2),
-                "close": round(b["close"], 2),
-                "volume": int(b.get("tick_volume", 1))
-            })
 
         curr_bar = self.aggregator.current_m1_bar
         current_bar = None
