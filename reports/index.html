@@ -530,6 +530,65 @@
         .dot-ok { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.6); }
         .dot-wait { background: #d29922; box-shadow: 0 0 6px rgba(210,153,34,0.6); }
         .dot-fail { background: #8b949e; }
+
+        /* Tactical Radar State Machine Tooltips & Pipeline Info */
+        .state-tooltip-container {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .state-tooltip-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 8px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.06);
+            border-radius: 8px;
+            padding: 12px 14px;
+            width: 350px;
+            z-index: 99999;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-4px);
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            text-align: left;
+        }
+        .state-tooltip-container:hover .state-tooltip-dropdown {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .state-step-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            border: 1px solid transparent;
+            font-size: 0.75rem;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .state-step-item.active {
+            background: rgba(31, 111, 235, 0.18) !important;
+            border: 1px solid #1f6feb !important;
+            border-left: 3px solid #58a6ff !important;
+        }
+        .state-step-badge {
+            font-size: 0.68rem;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, monospace;
+            flex-shrink: 0;
+            min-width: 82px;
+            text-align: center;
+        }
     </style>
     <!-- TradingView Lightweight Charts Library for Real-Time Institutional Charting -->
     <script src="/lightweight-charts.standalone.production.js"></script>
@@ -801,9 +860,47 @@
                                 Setup: Mean-Reversion Overextension
                             </div>
                         </div>
-                        <span id="e1-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px;">
-                            HUNTING
-                        </span>
+                        <div class="state-tooltip-container">
+                            <span id="e1-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px; display:inline-flex; align-items:center; gap:4px;">
+                                HUNTING ℹ️
+                            </span>
+                            <div class="state-tooltip-dropdown">
+                                <div style="font-size:0.72rem; font-weight:700; color:#58a6ff; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; border-bottom:1px solid #30363d; padding-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                                    <span>🔄 Scalper State Pipeline</span>
+                                    <span style="font-size:0.65rem; color:#8b949e; font-weight:normal;">Urutan Siklus (Awal ➔ Akhir)</span>
+                                </div>
+                                <div id="e1-state-list">
+                                    <div class="state-step-item" data-state="STANDBY">
+                                        <span class="state-step-badge" style="background:#30363d; color:#c9d1d9;">1. STANDBY</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#8b949e;">Pasif:</strong> Di luar jam Golden Window (10:30–14:30 UTC) atau pasar tutup. Bot menjaga modal agar tidak trading di zona manipulasi.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="HUNTING">
+                                        <span class="state-step-badge" style="background:#1f6feb; color:#fff;">2. HUNTING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#58a6ff;">Scanning:</strong> Jam aktif! Memindai area nilai wajar VWAP untuk mendeteksi overextension harga ekstrem.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="ARMED">
+                                        <span class="state-step-badge" style="background:#9e6a03; color:#fff;">3. ARMED</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d29922;">Siaga 1:</strong> Harga masuk radius tembak (&lt; $2.00 dari batas Upper/Lower ±1.8σ). Bot bersiap membidik.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="CONFIRMING">
+                                        <span class="state-step-badge" style="background:#d29922; color:#fff;">4. CONFIRMING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#f0883e;">Validasi:</strong> Batas band ekstrem disentuh/ditembus! Menunggu detik :00 (bar close) untuk validasi Rejection Wick ≥ 45%.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="FIRING">
+                                        <span class="state-step-badge" style="background:#238636; color:#fff;">5. FIRING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#3fb950;">Eksekusi:</strong> Syarat wick & candle warna valid! Order BUY/SELL ditembakkan seketika via socket TCP ke MT5.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="IN_POSITION">
+                                        <span class="state-step-badge" style="background:#8957e5; color:#fff;">6. IN_POSITION</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d2a8ff;">Memantau:</strong> Posisi terbuka di broker. Bot mengawal Trailing Stop, target TP VWAP Mean, atau exit time-stop 60 menit.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="DAILY_CAP_REACHED">
+                                        <span class="state-step-badge" style="background:#da3633; color:#fff;">7. DAILY_CAP</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#f85149;">Lockout:</strong> Kuota 2 trade harian tercapai atau Circuit Breaker aktif. Bot mengunci diri hingga esok hari.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Trigger Distance Progress Gauge -->
@@ -843,9 +940,43 @@
                                 Setup: Unfilled Base Retest + Callisto BE
                             </div>
                         </div>
-                        <span id="e2-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px;">
-                            SCANNING
-                        </span>
+                        <div class="state-tooltip-container">
+                            <span id="e2-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px; display:inline-flex; align-items:center; gap:4px;">
+                                SCANNING ℹ️
+                            </span>
+                            <div class="state-tooltip-dropdown">
+                                <div style="font-size:0.72rem; font-weight:700; color:#a371f7; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; border-bottom:1px solid #30363d; padding-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                                    <span>🔄 Intraday State Pipeline</span>
+                                    <span style="font-size:0.65rem; color:#8b949e; font-weight:normal;">Urutan Siklus (Awal ➔ Akhir)</span>
+                                </div>
+                                <div id="e2-state-list">
+                                    <div class="state-step-item" data-state="STANDBY">
+                                        <span class="state-step-badge" style="background:#30363d; color:#c9d1d9;">1. STANDBY</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#8b949e;">Pasif:</strong> Di luar jam sesi London/NY (08:00–16:30 UTC). Bot pasif.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="SCANNING">
+                                        <span class="state-step-badge" style="background:#1f6feb; color:#fff;">2. SCANNING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#58a6ff;">Mapping:</strong> Memindai struktur M15 untuk mendeteksi zona base Unfilled Orders (DBR / RBD).</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="ARMED">
+                                        <span class="state-step-badge" style="background:#9e6a03; color:#fff;">3. ARMED</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d29922;">Siaga 1:</strong> Harga bergerak mendekati zona Supply/Demand (&lt; 30 pips).</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="CONFIRMING">
+                                        <span class="state-step-badge" style="background:#d29922; color:#fff;">4. CONFIRMING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#f0883e;">Validasi:</strong> Harga memitigasi zona! Menunggu konfirmasi pinbar / engulfing pada penutupan bar M15.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="FIRING">
+                                        <span class="state-step-badge" style="background:#238636; color:#fff;">5. FIRING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#3fb950;">Eksekusi:</strong> Rejection terkonfirmasi! Order ditembakkan dengan target R:R 1:2.5 / 1:3.0.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="IN_POSITION">
+                                        <span class="state-step-badge" style="background:#8957e5; color:#fff;">6. IN_POSITION</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d2a8ff;">Memantau:</strong> Posisi swing aktif. Bot memantau Callisto Breakeven ratchet dan trailing profit.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Nearest Zones Strip -->
@@ -2818,8 +2949,18 @@
             const elE1Band = document.getElementById('e1-val-band');
 
             if (elE1Badge) {
-                elE1Badge.innerText = e1.state || 'STANDBY';
+                const curState = e1.state || 'STANDBY';
+                elE1Badge.innerHTML = `${curState} <span style="font-size:0.65rem; opacity:0.8;">ℹ️</span>`;
                 elE1Badge.className = 'badge ' + (e1.state_badge || 'badge-cyan');
+
+                // Dynamically highlight active pipeline step
+                document.querySelectorAll('#e1-state-list .state-step-item').forEach(el => {
+                    if (el.getAttribute('data-state') === curState) {
+                        el.classList.add('active');
+                    } else {
+                        el.classList.remove('active');
+                    }
+                });
             }
             if (elE1Dir) elE1Dir.innerText = 'Hunting: ' + (e1.hunting_direction || 'Mean Reversion');
             if (elE1Vwap) elE1Vwap.innerText = e1.vwap ? '$' + Number(e1.vwap).toFixed(2) : '--';
@@ -2872,8 +3013,18 @@
             const e2 = data.engine_2 || {};
             const elE2Badge = document.getElementById('e2-state-badge');
             if (elE2Badge) {
-                elE2Badge.innerText = e2.state || 'SCANNING';
+                const curState2 = e2.state || 'SCANNING';
+                elE2Badge.innerHTML = `${curState2} <span style="font-size:0.65rem; opacity:0.8;">ℹ️</span>`;
                 elE2Badge.className = 'badge ' + (e2.state_badge || 'badge-cyan');
+
+                // Dynamically highlight active pipeline step
+                document.querySelectorAll('#e2-state-list .state-step-item').forEach(el => {
+                    if (el.getAttribute('data-state') === curState2) {
+                        el.classList.add('active');
+                    } else {
+                        el.classList.remove('active');
+                    }
+                });
             }
 
             const elE2DemLvl = document.getElementById('e2-demand-level');
