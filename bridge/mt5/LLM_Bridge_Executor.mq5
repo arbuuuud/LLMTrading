@@ -12,13 +12,13 @@
 #include <Trade\PositionInfo.mqh>
 #include <Trade\AccountInfo.mqh>
 
-//--- INPUT PARAMETERS
-input group "Bridge Server Settings"
+//--- INPUT PARAMETERS (ZERO-CONFIG RISK: GOVERNED BY PYTHON WEB DASHBOARD)
+input group "=== LLM Trading Bridge Connection ==="
 input string   InpServerHost     = "127.0.0.1";  // Python Brain Host IP
 input int      InpServerPort     = 5555;         // Python Brain Port
 input int      InpTimeoutMs      = 3000;         // Socket Timeout (ms)
-input ulong    InpMagicNumber    = 999001;       // Expert Magic Number
 input ulong    InpDeviationPoints= 20;           // Max Slippage Deviation (points)
+input group "=== Note: Risk Management is 100% Handled via Dashboard ==="
 
 //--- GLOBAL VARIABLES
 CTrade         m_trade;
@@ -34,11 +34,12 @@ datetime       m_last_heartbeat  = 0;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   m_trade.SetExpertMagicNumber(InpMagicNumber);
+   m_trade.SetExpertMagicNumber(1001);
    m_trade.SetDeviationInPoints(InpDeviationPoints);
    m_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-   PrintFormat("[LLM Bridge] Initialized. Target Python Server: %s:%d (Magic: %I64u)", InpServerHost, InpServerPort, InpMagicNumber);
+   PrintFormat("[LLM Bridge] Initialized. Account: %I64d (%s). Brain: %s:%d",
+               AccountInfoInteger(ACCOUNT_LOGIN), AccountInfoString(ACCOUNT_COMPANY), InpServerHost, InpServerPort);
    
    ConnectToServer();
    EventSetTimer(1); // 1-second timer
@@ -86,6 +87,14 @@ bool ConnectToServer()
 
    m_connected = true;
    PrintFormat("[LLM Bridge] CONNECTED SUCCESSFULLY to Python Brain at %s:%d!", InpServerHost, InpServerPort);
+
+   // Send Registration Handshake with Account Details
+   string regJson = StringFormat(
+      "{\"type\":\"REGISTER\",\"account_id\":\"%I64d\",\"symbol\":\"%s\",\"company\":\"%s\",\"currency\":\"%s\",\"balance\":%.2f,\"equity\":%.2f}\n",
+      AccountInfoInteger(ACCOUNT_LOGIN), _Symbol, AccountInfoString(ACCOUNT_COMPANY), AccountInfoString(ACCOUNT_CURRENCY),
+      m_account.Balance(), m_account.Equity()
+   );
+   SendString(regJson);
    return true;
 }
 
@@ -274,10 +283,10 @@ void OnTick()
       }
    }
 
-   // Format JSON tick payload
+   // Format JSON tick payload with Account ID for multi-account governance
    string tickJson = StringFormat(
-      "{\"type\":\"TICK\",\"symbol\":\"%s\",\"bid\":%.2f,\"ask\":%.2f,\"spread\":%.2f,\"time\":%I64d,\"equity\":%.2f,\"balance\":%.2f,\"open_positions\":%d,\"unrealized\":%.2f}\n",
-      _Symbol, bid, ask, spread, timeMs,
+      "{\"type\":\"TICK\",\"account_id\":\"%I64d\",\"symbol\":\"%s\",\"bid\":%.2f,\"ask\":%.2f,\"spread\":%.2f,\"time\":%I64d,\"equity\":%.2f,\"balance\":%.2f,\"open_positions\":%d,\"unrealized\":%.2f}\n",
+      AccountInfoInteger(ACCOUNT_LOGIN), _Symbol, bid, ask, spread, timeMs,
       m_account.Equity(), m_account.Balance(), openCount, totalUnrealized
    );
 

@@ -20,6 +20,7 @@ Architecture:
 import sys
 import asyncio
 import json
+import yaml
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
@@ -32,6 +33,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from agents.orchestrator import MultiAgentOrchestrator
 from agents.market_regime.detector import MarketRegimeReport
 from agents.risk_manager.gatekeeper import TradeApproval
+from agents.risk_manager.monthly_ratchet_governor import MonthlyRatchetGovernor
 from engine.core.types import OrderDirection
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 from strategies.incubator.strat_6_intraday_smc import IntradaySMCStrategy
@@ -259,10 +261,57 @@ class LiveBridgeServer:
 
         self.aggregator = MultiTimeframeBarAggregator()
 
+        # Multi-Account Dynamic Risk Governance
+        self.accounts_config_path = PROJECT_ROOT / "configs" / "accounts.yaml"
+        self.governors: Dict[str, MonthlyRatchetGovernor] = {}
+        self.last_config_load = 0.0
+        self.cached_config: Dict[str, Any] = {}
+        self.active_account_id: str = "10001"
+
         self.client_writer: Optional[asyncio.StreamWriter] = None
         self.latest_tick: Optional[Dict[str, Any]] = None
         self.server: Optional[asyncio.Server] = None
         self.running = False
+
+    def _reload_accounts_config(self):
+        try:
+            if self.accounts_config_path.exists():
+                with open(self.accounts_config_path, "r", encoding="utf-8") as f:
+                    self.cached_config = yaml.safe_load(f) or {}
+                self.last_config_load = time.time()
+        except Exception as e:
+            logger.error(f"[Bridge] Error loading accounts.yaml: {e}")
+
+    def get_governor_for_account(self, account_id: str) -> MonthlyRatchetGovernor:
+        if time.time() - self.last_config_load > 5.0 or not self.cached_config:
+            self._reload_accounts_config()
+
+        accounts = self.cached_config.get("accounts", {})
+        profiles = self.cached_config.get("risk_profiles", {})
+        default_prof_name = self.cached_config.get("default_profile", "sweet_spot")
+
+        acc_info = accounts.get(str(account_id), {})
+        profile_name = acc_info.get("profile", default_prof_name)
+        prof = profiles.get(profile_name, profiles.get("sweet_spot", {}))
+
+        base_risk = float(prof.get("base_risk_pct", 0.75))
+        greed_risk = float(prof.get("greed_risk_pct", 0.375))
+        max_daily_loss = float(prof.get("max_daily_loss_pct", 1.50))
+        monthly_cap = float(prof.get("monthly_loss_cap_pct", 4.50))
+
+        gov = self.governors.get(account_id)
+        if gov is None or gov.base_risk_pct != base_risk:
+            logger.info(f"🛡️ [Governor Initialized] Account {account_id} -> Profile: {prof.get('name', profile_name)} (Base Risk: {base_risk}%, Daily Loss Cap: -{max_daily_loss}%, Monthly Cap: -{monthly_cap}%)")
+            gov = MonthlyRatchetGovernor(
+                base_risk_pct=base_risk,
+                greed_risk_pct=greed_risk,
+                max_daily_loss_pct=max_daily_loss,
+                monthly_loss_cap_pct=monthly_cap,
+                cooldown_bars=10
+            )
+            self.governors[account_id] = gov
+
+        return gov
 
     async def start(self):
         self.running = True
@@ -323,7 +372,14 @@ class LiveBridgeServer:
     async def _dispatch_incoming_message(self, msg: Dict[str, Any]):
         msg_type = msg.get("type") or msg.get("action")
 
-        if msg_type == "TICK":
+        if msg_type == "REGISTER":
+            acc_id = str(msg.get("account_id", "Unknown"))
+            self.active_account_id = acc_id
+            logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({msg.get('company')}) registered! Balance: ${msg.get('balance')} | Equity: ${msg.get('equity')}")
+            # Ensure governor is loaded for this account
+            self.get_governor_for_account(acc_id)
+
+        elif msg_type == "TICK":
             await self._handle_tick(msg)
         elif msg_type == "ORDER_RECEIPT":
             logger.info(
@@ -341,10 +397,15 @@ class LiveBridgeServer:
         time_ms = tick["time"]
         equity = float(tick.get("equity", 10000.0))
         open_pos = int(tick.get("open_positions", 0))
+        acc_id = str(tick.get("account_id", self.active_account_id))
+        self.active_account_id = acc_id
 
         if open_pos == 0:
             self.scalper_adapter.positions.clear()
             self.intraday_adapter.positions.clear()
+
+        # Update Account Governor
+        gov = self.get_governor_for_account(acc_id)
 
         # Feed to Multi-Timeframe aggregator
         completed_m1, completed_m15 = self.aggregator.process_tick(symbol, bid, ask, spread, time_ms)
@@ -395,27 +456,26 @@ class LiveBridgeServer:
         account_equity = float(self.latest_tick.get("equity", 10000.0))
         open_pos = int(self.latest_tick.get("open_positions", 0))
 
-        # Central Risk Gatekeeper approval
-        approval: TradeApproval = self.orchestrator.evaluate_trade_risk(
-            symbol=symbol,
-            direction=direction,
+        # Dynamic Multi-Account Risk Governor Evaluation
+        acc_gov = self.get_governor_for_account(self.active_account_id)
+        gov_approval = acc_gov.evaluate_entry(
             entry_price=entry_price,
             stop_loss=stop_loss,
             current_spread=current_spread,
-            account_equity=account_equity,
+            max_spread=0.35,
             num_open_positions=open_pos
         )
 
-        if not approval.approved:
-            logger.warning(f"[{strategy_name} VETO] Order rejected by Gatekeeper: {approval.reason}")
+        if not gov_approval.approved:
+            logger.warning(f"[{strategy_name} VETO] Order rejected by Account #{self.active_account_id} Governor: {gov_approval.reason}")
             return
 
         side_str = "BUY" if direction == OrderDirection.BUY else "SELL"
-        final_lots = approval.recommended_lots
+        final_lots = gov_approval.lots
 
         logger.info(
-            f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic}) | "
-            f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${approval.risk_dollars}"
+            f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic} | Acc: #{self.active_account_id}) | "
+            f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${gov_approval.risk_dollars:.2f} ({gov_approval.risk_pct}%)"
         )
 
         await self.send_order(
