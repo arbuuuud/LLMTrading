@@ -143,6 +143,14 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
                 "profiles": cfg.get("risk_profiles", {})
             })
 
+        elif path == "/api/portfolios":
+            port_file = REPORTS_DIR / "four_risk_profiles_comparison.json"
+            if port_file.exists():
+                with open(port_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return self._send_json(data)
+            return self._send_json({"error": "Portfolio data not found"}, 404)
+
         # 2. Static File Serving (Dashboard, Visualizer, Reports)
         if path in ("/", "/index.html", "/dashboard"):
             filepath = REPORTS_DIR / "index.html"
