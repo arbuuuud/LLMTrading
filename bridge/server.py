@@ -19,6 +19,7 @@ Architecture:
 
 import sys
 import time
+import math
 import asyncio
 import json
 import yaml
@@ -65,6 +66,47 @@ class MultiTimeframeBarAggregator:
         self.history_m15: List[Dict[str, Any]] = []
         self.max_history_m1: int = 150
         self.max_history_m15: int = 60
+        self._preload_history()
+
+    def _preload_history(self):
+        try:
+            import polars as pl
+            p_m1 = PROJECT_ROOT / "data" / "processed" / "bars" / "XAUUSD" / "M1" / "XAUUSD_M1.parquet"
+            p_m15 = PROJECT_ROOT / "data" / "processed" / "bars" / "XAUUSD" / "HTF" / "XAUUSD_M15.parquet"
+            if p_m1.exists():
+                df = pl.read_parquet(p_m1).tail(self.max_history_m1)
+                for row in df.iter_rows(named=True):
+                    ts = row["timestamp"]
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    self.history_m1.append({
+                        "symbol": "XAUUSD",
+                        "timestamp": ts,
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "mean_spread": float(row.get("mean_spread", 0.20)),
+                        "tick_volume": int(row.get("tick_volume", 1))
+                    })
+            if p_m15.exists():
+                df15 = pl.read_parquet(p_m15).tail(self.max_history_m15)
+                for row in df15.iter_rows(named=True):
+                    ts = row["timestamp"]
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    self.history_m15.append({
+                        "symbol": "XAUUSD",
+                        "timestamp": ts,
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "mean_spread": float(row.get("mean_spread", 0.20)),
+                        "tick_volume": int(row.get("tick_volume", 1))
+                    })
+        except Exception as e:
+            logger.debug(f"[Aggregator] Preload history skipped: {e}")
 
     def process_tick(
         self,
@@ -665,15 +707,32 @@ class LiveBridgeServer:
         ]
 
         bars_m1 = []
+        cum_vol = 0.0
+        cum_pv = 0.0
+        cum_p2v = 0.0
         for b in self.aggregator.history_m1[-120:]:
             ts = int(b["timestamp"].timestamp())
+            o = round(b["open"], 2)
+            h = round(b["high"], 2)
+            l = round(b["low"], 2)
+            c = round(b["close"], 2)
+            vol = max(1.0, float(b.get("tick_volume", 1)))
+            tp = (h + l + c) / 3.0
+            cum_vol += vol
+            cum_pv += tp * vol
+            cum_p2v += (tp ** 2) * vol
+            v = cum_pv / cum_vol
+            s = math.sqrt(max(0.0, (cum_p2v / cum_vol) - (v ** 2)))
             bars_m1.append({
                 "time": ts,
-                "open": round(b["open"], 2),
-                "high": round(b["high"], 2),
-                "low": round(b["low"], 2),
-                "close": round(b["close"], 2),
-                "volume": int(b.get("tick_volume", 1))
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": int(vol),
+                "vwap": round(v, 2),
+                "upper": round(v + 1.8 * s, 2),
+                "lower": round(v - 1.8 * s, 2)
             })
 
         bars_m15 = []

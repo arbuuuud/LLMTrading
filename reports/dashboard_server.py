@@ -15,9 +15,11 @@ import json
 import yaml
 import time
 import math
+import hmac
 import secrets
 import hashlib
 from pathlib import Path
+from typing import Optional
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
@@ -56,25 +58,42 @@ def verify_login(email, password):
     return computed_hash == target_hash
 
 
-def create_session(email):
-    token = secrets.token_hex(24)
-    ACTIVE_SESSIONS[token] = {
-        "email": email,
-        "expires_at": time.time() + (24 * 3600)  # 24 hours
-    }
-    return token
+def get_auth_secret() -> bytes:
+    cfg = load_accounts_config()
+    auth = cfg.get("auth", {})
+    secret = auth.get("secret_key")
+    if not secret:
+        secret = secrets.token_hex(32)
+        cfg.setdefault("auth", {})["secret_key"] = secret
+        save_accounts_config(cfg)
+    return secret.encode("utf-8")
 
 
-def is_authenticated(token):
+def create_session(email: str) -> str:
+    secret = get_auth_secret()
+    expires_at = int(time.time() + (30 * 86400))  # 30 days persistent session
+    payload = f"{email}:{expires_at}"
+    sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{email}:{expires_at}:{sig}"
+
+
+def is_authenticated(token: Optional[str]) -> bool:
     if not token:
         return False
-    session = ACTIVE_SESSIONS.get(token)
-    if not session:
+    try:
+        parts = token.strip().split(":")
+        if len(parts) != 3:
+            return False
+        email, exp_str, sig = parts
+        exp = int(exp_str)
+        if time.time() > exp:
+            return False
+        secret = get_auth_secret()
+        payload = f"{email}:{exp}"
+        expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected_sig)
+    except Exception:
         return False
-    if time.time() > session["expires_at"]:
-        del ACTIVE_SESSIONS[token]
-        return False
-    return True
 
 
 RADAR_STATE_PATH = REPORTS_DIR / "radar_state.json"
@@ -389,13 +408,22 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
             password = body.get("password", "")
             if verify_login(email, password):
                 token = create_session(email)
-                return self._send_json({
+                body_bytes = json.dumps({
                     "success": True,
                     "token": token,
                     "email": email,
-                    "expires_in": 86400,
+                    "expires_in": 2592000,
                     "message": "Login successful"
-                })
+                }).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body_bytes)))
+                self.send_header("Set-Cookie", f"session_token={token}; Path=/; Max-Age=2592000; SameSite=Lax")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+                self.end_headers()
+                self.wfile.write(body_bytes)
+                return
             else:
                 return self._send_json({
                     "success": False,

@@ -532,7 +532,7 @@
         .dot-fail { background: #8b949e; }
     </style>
     <!-- TradingView Lightweight Charts Library for Real-Time Institutional Charting -->
-    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -2248,10 +2248,13 @@
                 if (data.success && data.token) {
                     currentAuthToken = data.token;
                     localStorage.setItem('llm_auth_token', data.token);
+                    localStorage.setItem('llm_user_email', email);
+                    document.cookie = `session_token=${data.token}; path=/; max-age=2592000; SameSite=Lax`;
                     document.getElementById('login-modal-overlay').style.display = 'none';
                     document.getElementById('user-display').textContent = email;
                     showToast('✅ Login berhasil! Brain Portal aktif.');
-                    loadAccountsDashboard();
+                    const savedTab = localStorage.getItem('llm_active_tab') || 'RADAR';
+                    switchMainTab(savedTab);
                 } else {
                     errEl.textContent = data.error || 'Email atau password salah.';
                     errEl.style.display = 'block';
@@ -2270,6 +2273,8 @@
                 }).catch(() => {});
             }
             localStorage.removeItem('llm_auth_token');
+            localStorage.removeItem('llm_user_email');
+            document.cookie = "session_token=; path=/; max-age=0";
             currentAuthToken = '';
             document.getElementById('login-modal-overlay').style.display = 'flex';
         }
@@ -2279,6 +2284,7 @@
         const ALL_PORTFOLIOS_DATA = {"res_1x": {"risk_mult": 1.0, "elapsed": 2.3590409755706787, "total_trades": 171, "win_rate": 38.6, "payoff": 3.49, "net_profit": 8865.55, "roi_pct": 88.7, "profit_factor": 2.19, "max_drawdown_pct": 9.6, "sharpe_ratio": 4.08, "green_months": "8/11", "green_months_pct": 72.7, "scalp_trades": 114, "scalp_pnl": 7729.02, "intra_trades": 57, "intra_pnl": 1136.53, "daily_win_rate": 53.5, "avg_daily_gain": 268.41, "avg_daily_loss": -116.53, "max_day_gain": 860.66, "max_day_loss": -283.02, "monthly_pnl": {"2025-05": 476.64, "2025-06": 2153.2200000000003, "2025-07": -505.28, "2025-08": 1374.37, "2025-09": 406.9599999999999, "2025-10": -270.5199999999999, "2025-11": -159.57999999999993, "2025-12": 204.82999999999993, "2026-01": 1444.68, "2026-02": 2733.0, "2026-03": 1007.2299999999998}}, "res_2x": {"risk_mult": 2.0, "elapsed": 2.315948247909546, "total_trades": 160, "win_rate": 38.1, "payoff": 3.64, "net_profit": 22654.04, "roi_pct": 226.5, "profit_factor": 2.24, "max_drawdown_pct": 21.5, "sharpe_ratio": 4.08, "green_months": "7/11", "green_months_pct": 63.6, "scalp_trades": 107, "scalp_pnl": 19987.44, "intra_trades": 53, "intra_pnl": 2666.6, "daily_win_rate": 50.5, "avg_daily_gain": 738.13, "avg_daily_loss": -290.87, "max_day_gain": 2775.67, "max_day_loss": -704.28, "monthly_pnl": {"2025-05": 934.8200000000002, "2025-06": 4910.649999999999, "2025-07": -222.25000000000003, "2025-08": 3838.1700000000005, "2025-09": 817.0099999999998, "2025-10": -831.2299999999998, "2025-11": -1625.69, "2025-12": -426.00000000000006, "2026-01": 3792.83, "2026-02": 8195.8, "2026-03": 3269.9300000000003}}, "prop_firm": {"risk_mult": 1.0, "elapsed": 2.3590409755706787, "total_trades": 171, "win_rate": 38.6, "payoff": 3.49, "net_profit": 8865.55, "roi_pct": 88.7, "profit_factor": 2.19, "max_drawdown_pct": 9.6, "sharpe_ratio": 4.08, "green_months": "8/11", "green_months_pct": 72.7, "scalp_trades": 114, "scalp_pnl": 7729.02, "intra_trades": 57, "intra_pnl": 1136.53, "daily_win_rate": 53.5, "avg_daily_gain": 268.41, "avg_daily_loss": -116.53, "max_day_gain": 860.66, "max_day_loss": -283.02, "monthly_pnl": {"2025-05": 476.64, "2025-06": 2153.2200000000003, "2025-07": -505.28, "2025-08": 1374.37, "2025-09": 406.9599999999999, "2025-10": -270.5199999999999, "2025-11": -159.57999999999993, "2025-12": 204.82999999999993, "2026-01": 1444.68, "2026-02": 2733.0, "2026-03": 1007.2299999999998}}, "sweet_spot": {"risk_mult": 1.5, "elapsed": 1.7685868740081787, "total_trades": 168, "win_rate": 38.1, "payoff": 3.52, "net_profit": 14475.06, "roi_pct": 144.8, "profit_factor": 2.17, "max_drawdown_pct": 14.2, "sharpe_ratio": 4.0, "green_months": "7/11", "green_months_pct": 63.6, "scalp_trades": 113, "scalp_pnl": 12669.57, "intra_trades": 55, "intra_pnl": 1805.49, "daily_win_rate": 52.5, "avg_daily_gain": 461.25, "avg_daily_loss": -202.34, "max_day_gain": 1584.42, "max_day_loss": -476.87, "monthly_pnl": {"2025-05": 703.8, "2025-06": 3439.98, "2025-07": -701.8699999999999, "2025-08": 2169.46, "2025-09": 710.5899999999999, "2025-10": -503.1, "2025-11": -287.65999999999997, "2025-12": -333.13, "2026-01": 2448.3299999999995, "2026-02": 4954.719999999999, "2026-03": 1873.9400000000003}}, "aggressive": {"risk_mult": 2.0, "elapsed": 2.315948247909546, "total_trades": 160, "win_rate": 38.1, "payoff": 3.64, "net_profit": 22654.04, "roi_pct": 226.5, "profit_factor": 2.24, "max_drawdown_pct": 21.5, "sharpe_ratio": 4.08, "green_months": "7/11", "green_months_pct": 63.6, "scalp_trades": 107, "scalp_pnl": 19987.44, "intra_trades": 53, "intra_pnl": 2666.6, "daily_win_rate": 50.5, "avg_daily_gain": 738.13, "avg_daily_loss": -290.87, "max_day_gain": 2775.67, "max_day_loss": -704.28, "monthly_pnl": {"2025-05": 934.8200000000002, "2025-06": 4910.649999999999, "2025-07": -222.25000000000003, "2025-08": 3838.1700000000005, "2025-09": 817.0099999999998, "2025-10": -831.2299999999998, "2025-11": -1625.69, "2025-12": -426.00000000000006, "2026-01": 3792.83, "2026-02": 8195.8, "2026-03": 3269.9300000000003}}, "yolo": {"risk_mult": 4.0, "elapsed": 1.8346757888793945, "total_trades": 132, "win_rate": 41.7, "payoff": 3.14, "net_profit": 45912.5, "roi_pct": 459.1, "profit_factor": 2.25, "max_drawdown_pct": 32.1, "sharpe_ratio": 4.12, "green_months": "8/11", "green_months_pct": 72.7, "scalp_trades": 81, "scalp_pnl": 38970.57, "intra_trades": 51, "intra_pnl": 6941.93, "daily_win_rate": 43.4, "avg_daily_gain": 1786.91, "avg_daily_loss": -552.22, "max_day_gain": 7011.23, "max_day_loss": -1519.5, "monthly_pnl": {"2025-05": 2529.0099999999998, "2025-06": 4810.76, "2025-07": -1596.7399999999993, "2025-08": 9025.24, "2025-09": 2666.6500000000005, "2025-10": -1342.61, "2025-11": -3826.9500000000003, "2025-12": 522.1199999999999, "2026-01": 6100.179999999999, "2026-02": 25607.670000000006, "2026-03": 1417.17}}};
 
         function switchMainTab(tab) {
+            localStorage.setItem('llm_active_tab', tab);
             const btnAcc = document.getElementById('nav-btn-accounts');
             const btnRad = document.getElementById('nav-btn-radar');
             const btnPort = document.getElementById('nav-btn-portfolios');
@@ -2314,7 +2320,9 @@
             } else if (tab === 'RADAR') {
                 if (btnRad) btnRad.classList.add('active');
                 if (paneRad) paneRad.style.display = 'block';
-                startRadar();
+                setTimeout(() => {
+                    startRadar();
+                }, 60);
             } else if (tab === 'PORTFOLIOS') {
                 if (btnPort) btnPort.classList.add('active');
                 if (panePort) panePort.style.display = 'block';
@@ -2640,25 +2648,29 @@
             const container = document.getElementById('radar-tv-chart');
             if (!container) return;
 
+            const w = container.clientWidth || container.parentElement.clientWidth || 800;
+            const h = 510;
+
+            if (w < 100) {
+                setTimeout(initRadarChart, 80);
+                return;
+            }
+
             if (radarChart) {
-                setTimeout(() => {
-                    if (radarChart && container) {
-                        radarChart.resize(container.clientWidth, container.clientHeight || 510);
-                    }
-                }, 60);
+                radarChart.resize(w, h);
                 return;
             }
 
             if (typeof LightweightCharts === 'undefined') {
-                container.innerHTML = '<div style="padding:40px; text-align:center; color:#8b949e;">Lightweight Charts library initializing...</div>';
+                setTimeout(initRadarChart, 150);
                 return;
             }
 
             container.innerHTML = '';
 
             radarChart = LightweightCharts.createChart(container, {
-                width: container.clientWidth,
-                height: container.clientHeight || 510,
+                width: w,
+                height: h,
                 layout: {
                     background: { color: '#0d1117' },
                     textColor: '#8b949e',
@@ -2720,7 +2732,10 @@
 
             window.addEventListener('resize', () => {
                 if (radarChart && container) {
-                    radarChart.resize(container.clientWidth, container.clientHeight || 510);
+                    const newW = container.clientWidth;
+                    if (newW > 100) {
+                        radarChart.resize(newW, 510);
+                    }
                 }
             });
         }
@@ -2897,63 +2912,81 @@
         function renderRadarChartSeries(data) {
             if (!radarChart || !radarCandleSeries) return;
 
+            const container = document.getElementById('radar-tv-chart');
+            if (container && container.clientWidth > 100) {
+                radarChart.resize(container.clientWidth, 510);
+            }
+
             const rawBars = (radarTimeframe === 'M1' ? data.bars_m1 : data.bars_m15) || [];
             if (!rawBars.length) return;
 
             const map = new Map();
-            rawBars.forEach(b => map.set(b.time, b));
+            rawBars.forEach(b => {
+                if (b && b.time && !isNaN(b.open) && !isNaN(b.high) && !isNaN(b.low) && !isNaN(b.close)) {
+                    map.set(b.time, b);
+                }
+            });
             const sortedBars = Array.from(map.values()).sort((a, b) => a.time - b.time);
+            if (!sortedBars.length) return;
 
             const candleData = sortedBars.map(b => ({
                 time: b.time,
-                open: b.open,
-                high: b.high,
-                low: b.low,
-                close: b.close
+                open: Number(b.open),
+                high: Number(b.high),
+                low: Number(b.low),
+                close: Number(b.close)
             }));
 
-            radarCandleSeries.setData(candleData);
+            try {
+                radarCandleSeries.setData(candleData);
+                radarChart.timeScale().fitContent();
+            } catch (err) {
+                console.error("Error setting candle data:", err);
+            }
+
+            const loadingEl = document.getElementById('radar-chart-loading');
+            if (loadingEl) loadingEl.style.display = 'none';
 
             if (radarTimeframe === 'M1') {
                 const e1 = data.engine_1 || {};
-                const vwapVal = e1.vwap;
-                const upperVal = e1.upper_band;
-                const lowerVal = e1.lower_band;
-                const emaVal = e1.macro_ema50;
+                const vwapVal = Number(e1.vwap);
+                const upperVal = Number(e1.upper_band);
+                const lowerVal = Number(e1.lower_band);
+                const emaVal = Number(e1.macro_ema50);
 
-                if (vwapVal && radarVwapSeries) {
-                    const vwapData = sortedBars.map(b => ({
-                        time: b.time,
-                        value: b.vwap !== undefined ? b.vwap : vwapVal
-                    }));
-                    radarVwapSeries.setData(vwapData);
-                }
-                if (upperVal && radarUpperSeries) {
-                    const upperData = sortedBars.map(b => ({
-                        time: b.time,
-                        value: b.upper !== undefined ? b.upper : upperVal
-                    }));
-                    radarUpperSeries.setData(upperData);
-                }
-                if (lowerVal && radarLowerSeries) {
-                    const lowerData = sortedBars.map(b => ({
-                        time: b.time,
-                        value: b.lower !== undefined ? b.lower : lowerVal
-                    }));
-                    radarLowerSeries.setData(lowerData);
-                }
-                if (emaVal && radarEmaSeries) {
-                    const emaData = sortedBars.map(b => ({
-                        time: b.time,
-                        value: emaVal
-                    }));
-                    radarEmaSeries.setData(emaData);
+                try {
+                    if (radarVwapSeries) {
+                        const vwapData = sortedBars
+                            .filter(b => (b.vwap !== undefined && !isNaN(b.vwap)) || (vwapVal > 0))
+                            .map(b => ({ time: b.time, value: Number(b.vwap !== undefined ? b.vwap : vwapVal) }));
+                        if (vwapData.length) radarVwapSeries.setData(vwapData);
+                    }
+                    if (radarUpperSeries) {
+                        const upperData = sortedBars
+                            .filter(b => (b.upper !== undefined && !isNaN(b.upper)) || (upperVal > 0))
+                            .map(b => ({ time: b.time, value: Number(b.upper !== undefined ? b.upper : upperVal) }));
+                        if (upperData.length) radarUpperSeries.setData(upperData);
+                    }
+                    if (radarLowerSeries) {
+                        const lowerData = sortedBars
+                            .filter(b => (b.lower !== undefined && !isNaN(b.lower)) || (lowerVal > 0))
+                            .map(b => ({ time: b.time, value: Number(b.lower !== undefined ? b.lower : lowerVal) }));
+                        if (lowerData.length) radarLowerSeries.setData(lowerData);
+                    }
+                    if (emaVal > 0 && radarEmaSeries) {
+                        const emaData = sortedBars.map(b => ({ time: b.time, value: emaVal }));
+                        radarEmaSeries.setData(emaData);
+                    }
+                } catch (err) {
+                    console.error("Error setting line series:", err);
                 }
             } else {
-                if (radarVwapSeries) radarVwapSeries.setData([]);
-                if (radarUpperSeries) radarUpperSeries.setData([]);
-                if (radarLowerSeries) radarLowerSeries.setData([]);
-                if (radarEmaSeries) radarEmaSeries.setData([]);
+                try {
+                    if (radarVwapSeries) radarVwapSeries.setData([]);
+                    if (radarUpperSeries) radarUpperSeries.setData([]);
+                    if (radarLowerSeries) radarLowerSeries.setData([]);
+                    if (radarEmaSeries) radarEmaSeries.setData([]);
+                } catch (e) {}
             }
 
             const elBarStatus = document.getElementById('radar-bar-status');
@@ -2966,7 +2999,13 @@
         window.addEventListener('DOMContentLoaded', () => {
             if (currentAuthToken) {
                 document.getElementById('login-modal-overlay').style.display = 'none';
-                loadAccountsDashboard();
+                const savedEmail = localStorage.getItem('llm_user_email');
+                if (savedEmail) {
+                    const ud = document.getElementById('user-display');
+                    if (ud) ud.textContent = savedEmail;
+                }
+                const savedTab = localStorage.getItem('llm_active_tab') || 'RADAR';
+                switchMainTab(savedTab);
             } else {
                 document.getElementById('login-modal-overlay').style.display = 'flex';
             }
