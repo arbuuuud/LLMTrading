@@ -403,18 +403,6 @@
             margin-top: 10px;
             display: none;
         }
-        .quick-fill {
-            margin-top: 18px;
-            padding: 10px;
-            background: rgba(56, 139, 253, 0.1);
-            border: 1px dashed rgba(56, 139, 253, 0.4);
-            border-radius: 6px;
-            font-size: 0.75rem;
-            color: #58a6ff;
-            cursor: pointer;
-            text-align: center;
-        }
-        .quick-fill:hover { background: rgba(56, 139, 253, 0.2); }
 
         /* === ACCOUNTS TAB UI === */
         .accounts-container {
@@ -531,17 +519,14 @@
             <form id="login-form" onsubmit="handleLoginSubmit(event)">
                 <div class="form-group">
                     <label class="form-label">Email Operator / Trader</label>
-                    <input type="email" id="login-email" class="form-input" value="arief.setiabudi2010@gmail.com" required>
+                    <input type="email" id="login-email" class="form-input" placeholder="Masukkan email terdaftar..." autocomplete="email" required>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Password</label>
-                    <input type="password" id="login-password" class="form-input" value="P@ssw0rd!" required>
+                    <input type="password" id="login-password" class="form-input" placeholder="Masukkan password..." autocomplete="current-password" required>
                 </div>
                 <button type="submit" class="btn-submit">🔓 Sign In to Brain Portal</button>
-                <div id="login-err" class="login-error">Password salah atau otorisasi ditolak.</div>
-                <div class="quick-fill" onclick="autoFillCredentials()">
-                    ⚡ Quick Fill: arief.setiabudi2010@gmail.com / P@ssw0rd!
-                </div>
+                <div id="login-err" class="login-error">Email atau password salah. Silakan coba lagi.</div>
             </form>
         </div>
     </div>
@@ -574,7 +559,7 @@
         <div style="display:flex; align-items:center; gap:12px;">
             <div class="user-chip">
                 <span>🟢 Connected</span>
-                <span style="color:#58a6ff; font-weight:600;" id="user-display">arief.setiabudi2010@gmail.com</span>
+                <span style="color:#58a6ff; font-weight:600;" id="user-display">Operator</span>
                 <button class="logout-btn" onclick="handleLogout()">Logout</button>
             </div>
         </div>
@@ -2022,11 +2007,6 @@
             setTimeout(() => { t.style.display = 'none'; }, 3500);
         }
 
-        function autoFillCredentials() {
-            document.getElementById('login-email').value = 'arief.setiabudi2010@gmail.com';
-            document.getElementById('login-password').value = 'P@ssw0rd!';
-        }
-
         async function handleLoginSubmit(e) {
             e.preventDefault();
             const email = document.getElementById('login-email').value.trim();
@@ -2046,24 +2026,15 @@
                     localStorage.setItem('llm_auth_token', data.token);
                     document.getElementById('login-modal-overlay').style.display = 'none';
                     document.getElementById('user-display').textContent = email;
-                    showToast('✅ Selamat datang, Pak Arief! Brain Portal aktif.');
+                    showToast('✅ Login berhasil! Brain Portal aktif.');
                     loadAccountsDashboard();
                 } else {
-                    errEl.textContent = data.error || 'Login gagal';
+                    errEl.textContent = data.error || 'Email atau password salah.';
                     errEl.style.display = 'block';
                 }
             } catch (err) {
-                // If running on static without backend server, allow offline fallback
-                if (email === 'arief.setiabudi2010@gmail.com' && password === 'P@ssw0rd!') {
-                    currentAuthToken = 'offline_token';
-                    localStorage.setItem('llm_auth_token', currentAuthToken);
-                    document.getElementById('login-modal-overlay').style.display = 'none';
-                    showToast('✅ Login berhasil (Offline Mode)');
-                    renderMockAccounts();
-                } else {
-                    errEl.textContent = 'Koneksi ke backend server gagal.';
-                    errEl.style.display = 'block';
-                }
+                errEl.textContent = 'Koneksi ke backend server gagal. Pastikan server aktif.';
+                errEl.style.display = 'block';
             }
         }
 
