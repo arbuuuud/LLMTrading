@@ -41,6 +41,7 @@ logs/
 temp/
 tmp/
 .cache/
+reports/radar_state.json*
 
 # OS / Editor
 .DS_Store

@@ -500,8 +500,39 @@
             from { transform: translateY(20px); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
         }
-
+        @keyframes pulseGlow {
+            0% { opacity: 0.4; transform: scale(0.9); }
+            50% { opacity: 1.0; transform: scale(1.1); }
+            100% { opacity: 0.4; transform: scale(0.9); }
+        }
+        .live-beacon {
+            animation: pulseGlow 1.5s infinite ease-in-out;
+            display: inline-block;
+            color: #3fb950;
+        }
+        .radar-check-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.78rem;
+            gap: 8px;
+        }
+        .radar-check-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .dot-ok { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.6); }
+        .dot-wait { background: #d29922; box-shadow: 0 0 6px rgba(210,153,34,0.6); }
+        .dot-fail { background: #8b949e; }
     </style>
+    <!-- TradingView Lightweight Charts Library for Real-Time Institutional Charting -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -543,6 +574,9 @@
             <div class="nav-tabs">
                 <button id="nav-btn-accounts" class="nav-tab-btn active" onclick="switchMainTab('ACCOUNTS')">
                     👥 Account & Risk Manager
+                </button>
+                <button id="nav-btn-radar" class="nav-tab-btn" onclick="switchMainTab('RADAR')">
+                    🎯 Tactical Radar & HUD <span style="font-size:0.7rem; background:rgba(63,185,80,0.2); color:#3fb950; border:1px solid rgba(63,185,80,0.4); padding:1px 6px; border-radius:10px; margin-left:4px;"><span class="live-beacon">●</span> LIVE</span>
                 </button>
                 <button id="nav-btn-portfolios" class="nav-tab-btn" onclick="switchMainTab('PORTFOLIOS')">
                     💼 4 Portfolio Profiles
@@ -675,9 +709,199 @@
     </div>
 
     <!-- ============================================================= -->
-    <!-- TAB 3: RISK PROFILES & CIRCUIT BREAKER MATRIX                -->
+    <!-- TAB 5: TACTICAL RADAR & LIVE SETUP HUNTING HUD                -->
     <!-- ============================================================= -->
-    
+    <div id="pane-radar" class="accounts-container" style="display:none;">
+        
+        <!-- Live Ticker & Operational Status Strip -->
+        <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px 20px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+            <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                <div style="display:flex; align-items:baseline; gap:8px;">
+                    <span style="font-size:1.35rem; font-weight:800; color:#fff; letter-spacing:0.5px;">XAUUSD</span>
+                    <span style="font-size:0.75rem; background:#21262d; border:1px solid #30363d; padding:2px 8px; border-radius:10px; color:#8b949e;">SPOT GOLD</span>
+                </div>
+                <div style="display:flex; align-items:baseline; gap:12px; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">
+                    <div>
+                        <span style="font-size:0.7rem; color:#8b949e; text-transform:uppercase;">Mid Price</span>
+                        <div id="radar-price-mid" style="font-size:1.4rem; font-weight:700; color:#58a6ff;">--.--</div>
+                    </div>
+                    <div style="font-size:0.85rem;">
+                        <span style="color:#8b949e;">Bid:</span> <span id="radar-price-bid" style="color:#c9d1d9;">--</span>
+                        <span style="color:#8b949e; margin-left:8px;">Ask:</span> <span id="radar-price-ask" style="color:#c9d1d9;">--</span>
+                        <span style="color:#8b949e; margin-left:8px;">Spread:</span> <span id="radar-price-spread" style="color:#3fb950; font-weight:600;">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Badges -->
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <div id="radar-bridge-pill" class="badge" style="background:#238636; padding:6px 12px; font-size:0.78rem; display:flex; align-items:center; gap:6px;">
+                    <span class="live-beacon">●</span> <span id="radar-bridge-text">Checking Bridge Feed...</span>
+                </div>
+                <div id="radar-window-pill" class="badge badge-cyan" style="padding:6px 12px; font-size:0.78rem;">
+                    ⏳ Golden Window: Checking...
+                </div>
+                <div style="font-size:0.8rem; color:#8b949e; font-family:monospace; background:#0d1117; padding:5px 10px; border-radius:6px; border:1px solid #30363d;">
+                    🕒 <span id="radar-clock-utc">--:--:-- UTC</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2-Column Split: Left = Interactive Chart, Right = Tactical HUD -->
+        <div style="display:grid; grid-template-columns: minmax(0, 1.85fr) minmax(360px, 1.15fr); gap:16px; align-items:start;">
+            
+            <!-- LEFT COLUMN: Chart + Overlays -->
+            <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; overflow:hidden;">
+                <div style="padding:10px 16px; border-bottom:1px solid #30363d; display:flex; justify-content:space-between; align-items:center; background:#1c2128; flex-wrap:wrap; gap:8px;">
+                    <!-- Timeframe Toggle -->
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <button id="radar-tf-m1" class="profile-btn active" style="font-size:0.8rem; padding:4px 12px; border-radius:6px;" onclick="switchRadarTimeframe('M1')">
+                            ⚡ M1 Scalper View
+                        </button>
+                        <button id="radar-tf-m15" class="profile-btn" style="font-size:0.8rem; padding:4px 12px; border-radius:6px;" onclick="switchRadarTimeframe('M15')">
+                            🏹 M15 Intraday View
+                        </button>
+                    </div>
+
+                    <!-- Overlay Legends -->
+                    <div style="display:flex; align-items:center; gap:14px; font-size:0.75rem; flex-wrap:wrap;">
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#1f6feb; border-radius:2px;"></span> VWAP</span>
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#d2a8ff; border-radius:2px;"></span> +1.8σ Upper</span>
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#56d364; border-radius:2px;"></span> -1.8σ Lower</span>
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#d29922; border-radius:2px;"></span> H1 EMA 50</span>
+                    </div>
+                </div>
+
+                <!-- Lightweight Chart Canvas Mount Point -->
+                <div id="radar-tv-chart" style="width:100%; height:510px; background:#0d1117; position:relative;">
+                    <div id="radar-chart-loading" style="position:absolute; top:0; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; color:#8b949e; font-size:0.85rem;">
+                        Loading live market feed...
+                    </div>
+                </div>
+
+                <!-- Chart Footer Info Strip -->
+                <div style="padding:8px 16px; border-top:1px solid #30363d; font-size:0.75rem; color:#8b949e; display:flex; justify-content:space-between; align-items:center;">
+                    <span>Auction Market Theory: 95.4% volume distribution within ±1.8σ bands</span>
+                    <span id="radar-bar-status">Waiting for bar feed...</span>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: Tactical Radar HUD (What the brain is hunting) -->
+            <div style="display:flex; flex-direction:column; gap:16px;">
+                
+                <!-- ENGINE 1: M1 Anchored VWAP Scalper HUD -->
+                <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #21262d;">
+                        <div>
+                            <div style="font-weight:700; font-size:0.95rem; color:#fff; display:flex; align-items:center; gap:6px;">
+                                ⚡ Engine 1: M1 VWAP Scalper
+                                <span class="badge badge-amber" style="font-size:0.65rem;">Magic 1001</span>
+                            </div>
+                            <div id="e1-hunting-dir" style="font-size:0.75rem; color:#8b949e; margin-top:2px;">
+                                Setup: Mean-Reversion Overextension
+                            </div>
+                        </div>
+                        <span id="e1-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px;">
+                            HUNTING
+                        </span>
+                    </div>
+
+                    <!-- Trigger Distance Progress Gauge -->
+                    <div style="margin-bottom:16px; background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; margin-bottom:6px;">
+                            <span style="color:#8b949e;">Trigger Proximity Gauge</span>
+                            <span id="e1-dist-text" style="color:#58a6ff; font-weight:600; font-family:monospace;">Calculating...</span>
+                        </div>
+                        <div style="height:8px; background:#21262d; border-radius:4px; overflow:hidden; position:relative;">
+                            <div id="e1-gauge-bar" style="height:100%; width:50%; background:linear-gradient(90deg, #1f6feb, #3fb950); transition:width 0.4s ease;"></div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#6e7681; margin-top:4px; font-family:monospace;">
+                            <span>VWAP: <strong id="e1-val-vwap" style="color:#c9d1d9;">--</strong></span>
+                            <span>Stretch: <strong id="e1-val-stretch" style="color:#c9d1d9;">--</strong></span>
+                            <span>Band: <strong id="e1-val-band" style="color:#c9d1d9;">--</strong></span>
+                        </div>
+                    </div>
+
+                    <!-- 5-Pillar Conditions Checklist -->
+                    <div style="font-size:0.75rem; font-weight:600; color:#8b949e; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+                        Pre-Entry Criteria Checklist:
+                    </div>
+                    <div id="e1-checklist-container" style="display:flex; flex-direction:column; gap:6px;">
+                        <!-- Injected by JS -->
+                    </div>
+                </div>
+
+                <!-- ENGINE 2: M15 Intraday NFC HUD -->
+                <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #21262d;">
+                        <div>
+                            <div style="font-weight:700; font-size:0.95rem; color:#fff; display:flex; align-items:center; gap:6px;">
+                                🏹 Engine 2: M15 Fadli NFC Intraday
+                                <span class="badge badge-amber" style="font-size:0.65rem;">Magic 2001</span>
+                            </div>
+                            <div id="e2-hunting-dir" style="font-size:0.75rem; color:#8b949e; margin-top:2px;">
+                                Setup: Unfilled Base Retest + Callisto BE
+                            </div>
+                        </div>
+                        <span id="e2-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px;">
+                            SCANNING
+                        </span>
+                    </div>
+
+                    <!-- Nearest Zones Strip -->
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:14px;">
+                        <div style="background:#0d1117; border:1px solid rgba(63,185,80,0.3); border-radius:6px; padding:8px 10px;">
+                            <div style="font-size:0.7rem; color:#3fb950; font-weight:600;">DEMAND ZONE (DBR)</div>
+                            <div id="e2-demand-level" style="font-size:0.82rem; font-weight:600; color:#c9d1d9; font-family:monospace; margin-top:2px;">--</div>
+                            <div id="e2-demand-dist" style="font-size:0.7rem; color:#8b949e; margin-top:2px;">-- pips away</div>
+                        </div>
+                        <div style="background:#0d1117; border:1px solid rgba(248,81,73,0.3); border-radius:6px; padding:8px 10px;">
+                            <div style="font-size:0.7rem; color:#f85149; font-weight:600;">SUPPLY ZONE (RBD)</div>
+                            <div id="e2-supply-level" style="font-size:0.82rem; font-weight:600; color:#c9d1d9; font-family:monospace; margin-top:2px;">--</div>
+                            <div id="e2-supply-dist" style="font-size:0.7rem; color:#8b949e; margin-top:2px;">-- pips away</div>
+                        </div>
+                    </div>
+
+                    <!-- 4-Pillar Conditions Checklist -->
+                    <div style="font-size:0.75rem; font-weight:600; color:#8b949e; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+                        M15 Retest Criteria Checklist:
+                    </div>
+                    <div id="e2-checklist-container" style="display:flex; flex-direction:column; gap:6px;">
+                        <!-- Injected by JS -->
+                    </div>
+                </div>
+
+                <!-- RISK GOVERNOR HUD & SIZING TELEMETRY -->
+                <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:14px 16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <span style="font-size:0.8rem; font-weight:700; color:#58a6ff; text-transform:uppercase; letter-spacing:0.5px;">
+                            🛡️ Risk Governor & Auto-Sizing
+                        </span>
+                        <span id="radar-gov-status" class="badge" style="background:#238636; font-size:0.68rem;">
+                            CLEARED TO TRADE
+                        </span>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; font-size:0.75rem;">
+                        <div style="background:#0d1117; padding:8px; border-radius:6px; border:1px solid #21262d;">
+                            <div style="color:#8b949e; font-size:0.68rem;">NEXT LOT SIZE</div>
+                            <div id="radar-calc-lot" style="font-size:1.05rem; font-weight:700; color:#3fb950; font-family:monospace;">0.12 Lots</div>
+                        </div>
+                        <div style="background:#0d1117; padding:8px; border-radius:6px; border:1px solid #21262d;">
+                            <div style="color:#8b949e; font-size:0.68rem;">RISK CAPITAL</div>
+                            <div id="radar-risk-dollar" style="font-size:1.05rem; font-weight:700; color:#58a6ff; font-family:monospace;">$50.00 (0.5%)</div>
+                        </div>
+                        <div style="background:#0d1117; padding:8px; border-radius:6px; border:1px solid #21262d;">
+                            <div style="color:#8b949e; font-size:0.68rem;">DAILY LOSS CAP</div>
+                            <div id="radar-daily-cap" style="font-size:1.05rem; font-weight:700; color:#f85149; font-family:monospace;">-$100.00</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
     <!-- ============================================================= -->
     <!-- TAB 2: 4 PORTFOLIO PROFILES SHOWCASE (NEW MENU)               -->
     <!-- ============================================================= -->
@@ -2056,29 +2280,41 @@
 
         function switchMainTab(tab) {
             const btnAcc = document.getElementById('nav-btn-accounts');
+            const btnRad = document.getElementById('nav-btn-radar');
             const btnPort = document.getElementById('nav-btn-portfolios');
             const btnAna = document.getElementById('nav-btn-analytics');
             const btnPro = document.getElementById('nav-btn-profiles');
 
             const paneAcc = document.getElementById('pane-accounts');
+            const paneRad = document.getElementById('pane-radar');
             const panePort = document.getElementById('pane-portfolios');
             const paneAna = document.getElementById('pane-analytics');
             const panePro = document.getElementById('pane-profiles');
 
             if (btnAcc) btnAcc.classList.remove('active');
+            if (btnRad) btnRad.classList.remove('active');
             if (btnPort) btnPort.classList.remove('active');
             if (btnAna) btnAna.classList.remove('active');
             if (btnPro) btnPro.classList.remove('active');
 
             if (paneAcc) paneAcc.style.display = 'none';
+            if (paneRad) paneRad.style.display = 'none';
             if (panePort) panePort.style.display = 'none';
             if (paneAna) paneAna.style.display = 'none';
             if (panePro) panePro.style.display = 'none';
+
+            if (tab !== 'RADAR') {
+                stopRadarPolling();
+            }
 
             if (tab === 'ACCOUNTS') {
                 if (btnAcc) btnAcc.classList.add('active');
                 if (paneAcc) paneAcc.style.display = 'block';
                 loadAccountsDashboard();
+            } else if (tab === 'RADAR') {
+                if (btnRad) btnRad.classList.add('active');
+                if (paneRad) paneRad.style.display = 'block';
+                startRadar();
             } else if (tab === 'PORTFOLIOS') {
                 if (btnPort) btnPort.classList.add('active');
                 if (panePort) panePort.style.display = 'block';
@@ -2354,6 +2590,375 @@
                 delete currentAccountsData[id];
                 showToast(`Akun #${id} dihapus.`);
                 renderAccountsTable(currentAccountsData, currentProfilesData);
+            }
+        }
+
+        // =============================================================
+        // TAB 5: TACTICAL RADAR & LIVE SETUP HUNTING HUD JAVASCRIPT
+        // =============================================================
+        let radarChart = null;
+        let radarCandleSeries = null;
+        let radarVwapSeries = null;
+        let radarUpperSeries = null;
+        let radarLowerSeries = null;
+        let radarEmaSeries = null;
+        let radarTimeframe = 'M1';
+        let radarPollTimer = null;
+        let radarLastData = null;
+
+        function startRadar() {
+            initRadarChart();
+            fetchRadarData();
+            if (radarPollTimer) clearInterval(radarPollTimer);
+            radarPollTimer = setInterval(fetchRadarData, 1000);
+        }
+
+        function stopRadarPolling() {
+            if (radarPollTimer) {
+                clearInterval(radarPollTimer);
+                radarPollTimer = null;
+            }
+        }
+
+        function switchRadarTimeframe(tf) {
+            radarTimeframe = tf;
+            const btnM1 = document.getElementById('radar-tf-m1');
+            const btnM15 = document.getElementById('radar-tf-m15');
+            if (tf === 'M1') {
+                if (btnM1) btnM1.classList.add('active');
+                if (btnM15) btnM15.classList.remove('active');
+            } else {
+                if (btnM1) btnM1.classList.remove('active');
+                if (btnM15) btnM15.classList.add('active');
+            }
+            if (radarLastData) {
+                renderRadarChartSeries(radarLastData);
+            }
+        }
+
+        function initRadarChart() {
+            const container = document.getElementById('radar-tv-chart');
+            if (!container) return;
+
+            if (radarChart) {
+                setTimeout(() => {
+                    if (radarChart && container) {
+                        radarChart.resize(container.clientWidth, container.clientHeight || 510);
+                    }
+                }, 60);
+                return;
+            }
+
+            if (typeof LightweightCharts === 'undefined') {
+                container.innerHTML = '<div style="padding:40px; text-align:center; color:#8b949e;">Lightweight Charts library initializing...</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+
+            radarChart = LightweightCharts.createChart(container, {
+                width: container.clientWidth,
+                height: container.clientHeight || 510,
+                layout: {
+                    background: { color: '#0d1117' },
+                    textColor: '#8b949e',
+                    fontSize: 11,
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace'
+                },
+                grid: {
+                    vertLines: { color: 'rgba(48, 54, 61, 0.4)' },
+                    horzLines: { color: 'rgba(48, 54, 61, 0.4)' }
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal
+                },
+                rightPriceScale: {
+                    borderColor: '#30363d',
+                    autoScale: true
+                },
+                timeScale: {
+                    borderColor: '#30363d',
+                    timeVisible: true,
+                    secondsVisible: false
+                }
+            });
+
+            radarCandleSeries = radarChart.addCandlestickSeries({
+                upColor: '#3fb950',
+                downColor: '#f85149',
+                borderUpColor: '#3fb950',
+                borderDownColor: '#f85149',
+                wickUpColor: '#3fb950',
+                wickDownColor: '#f85149'
+            });
+
+            radarVwapSeries = radarChart.addLineSeries({
+                color: '#1f6feb',
+                lineWidth: 2,
+                title: 'VWAP'
+            });
+
+            radarUpperSeries = radarChart.addLineSeries({
+                color: '#d2a8ff',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                title: '+1.8σ'
+            });
+
+            radarLowerSeries = radarChart.addLineSeries({
+                color: '#56d364',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                title: '-1.8σ'
+            });
+
+            radarEmaSeries = radarChart.addLineSeries({
+                color: '#d29922',
+                lineWidth: 1.5,
+                title: 'H1 EMA 50'
+            });
+
+            window.addEventListener('resize', () => {
+                if (radarChart && container) {
+                    radarChart.resize(container.clientWidth, container.clientHeight || 510);
+                }
+            });
+        }
+
+        async function fetchRadarData() {
+            try {
+                const res = await fetch('/api/radar');
+                if (!res.ok) return;
+                const data = await res.json();
+                radarLastData = data;
+                updateRadarUI(data);
+            } catch (e) {
+                console.debug('Radar poll error:', e);
+            }
+        }
+
+        function updateRadarUI(data) {
+            if (!data) return;
+
+            // 1. Ticker strip
+            const tick = data.tick || {};
+            const elMid = document.getElementById('radar-price-mid');
+            const elBid = document.getElementById('radar-price-bid');
+            const elAsk = document.getElementById('radar-price-ask');
+            const elSpread = document.getElementById('radar-price-spread');
+
+            if (elMid && tick.mid) elMid.innerText = Number(tick.mid).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            if (elBid && tick.bid) elBid.innerText = Number(tick.bid).toFixed(2);
+            if (elAsk && tick.ask) elAsk.innerText = Number(tick.ask).toFixed(2);
+            if (elSpread && tick.spread !== undefined) elSpread.innerText = '$' + Number(tick.spread).toFixed(2);
+
+            // Bridge pill
+            const elBridgePill = document.getElementById('radar-bridge-pill');
+            const elBridgeText = document.getElementById('radar-bridge-text');
+            if (elBridgePill && elBridgeText) {
+                if (data.status === 'LIVE_STREAMING') {
+                    elBridgePill.style.background = '#238636';
+                    elBridgeText.innerText = 'MT5 Bridge Streaming (TCP: 5555)';
+                } else {
+                    elBridgePill.style.background = '#9e6a03';
+                    elBridgeText.innerText = 'Bridge Standby / Parquet Replay';
+                }
+            }
+
+            // Window pill
+            const elWindowPill = document.getElementById('radar-window-pill');
+            const e1Checklist = (data.engine_1 && data.engine_1.checklist) || [];
+            if (elWindowPill && e1Checklist[0]) {
+                elWindowPill.innerText = '⚡ ' + e1Checklist[0].val;
+                if (e1Checklist[0].ok) {
+                    elWindowPill.className = 'badge badge-cyan';
+                } else {
+                    elWindowPill.className = 'badge';
+                    elWindowPill.style.background = '#30363d';
+                }
+            }
+
+            // Clock
+            const elClock = document.getElementById('radar-clock-utc');
+            if (elClock && data.updated_at) {
+                const d = new Date(data.updated_at);
+                elClock.innerText = d.toUTCString().slice(17, 25) + ' UTC';
+            }
+
+            // 2. Engine 1 Card
+            const e1 = data.engine_1 || {};
+            const elE1Badge = document.getElementById('e1-state-badge');
+            const elE1Dir = document.getElementById('e1-hunting-dir');
+            const elE1Dist = document.getElementById('e1-dist-text');
+            const elE1Bar = document.getElementById('e1-gauge-bar');
+            const elE1Vwap = document.getElementById('e1-val-vwap');
+            const elE1Stretch = document.getElementById('e1-val-stretch');
+            const elE1Band = document.getElementById('e1-val-band');
+
+            if (elE1Badge) {
+                elE1Badge.innerText = e1.state || 'STANDBY';
+                elE1Badge.className = 'badge ' + (e1.state_badge || 'badge-cyan');
+            }
+            if (elE1Dir) elE1Dir.innerText = 'Hunting: ' + (e1.hunting_direction || 'Mean Reversion');
+            if (elE1Vwap) elE1Vwap.innerText = e1.vwap ? '$' + Number(e1.vwap).toFixed(2) : '--';
+            if (elE1Stretch) elE1Stretch.innerText = (e1.stretch_sigma ? (e1.stretch_sigma > 0 ? '+' : '') + Number(e1.stretch_sigma).toFixed(2) : '0.00') + 'σ';
+            
+            const isUpperTarget = (tick.mid >= (e1.vwap || 0));
+            const targetBand = isUpperTarget ? e1.upper_band : e1.lower_band;
+            if (elE1Band) elE1Band.innerText = targetBand ? '$' + Number(targetBand).toFixed(2) : '--';
+
+            const distVal = isUpperTarget ? e1.dist_to_upper : e1.dist_to_lower;
+            if (elE1Dist) {
+                if (distVal !== undefined && distVal !== null) {
+                    if (distVal <= 0) {
+                        elE1Dist.innerText = 'EXTREME REACHED (Trigger Zone)';
+                        elE1Dist.style.color = '#3fb950';
+                    } else {
+                        elE1Dist.innerText = '$' + Math.abs(distVal).toFixed(2) + ' to ' + (isUpperTarget ? 'Upper' : 'Lower') + ' Band';
+                        elE1Dist.style.color = '#58a6ff';
+                    }
+                }
+            }
+            if (elE1Bar) {
+                const totalBandDist = Math.abs((targetBand || 0) - (e1.vwap || 0)) || 5.0;
+                const currentProg = Math.min(100, Math.max(10, Math.round((1.0 - (Math.max(0, distVal || 0) / totalBandDist)) * 100)));
+                elE1Bar.style.width = currentProg + '%';
+                if (currentProg >= 95) {
+                    elE1Bar.style.background = 'linear-gradient(90deg, #d29922, #3fb950)';
+                } else {
+                    elE1Bar.style.background = 'linear-gradient(90deg, #1f6feb, #58a6ff)';
+                }
+            }
+
+            // Checklist E1
+            const elE1Checks = document.getElementById('e1-checklist-container');
+            if (elE1Checks && e1.checklist) {
+                elE1Checks.innerHTML = e1.checklist.map(item => `
+                    <div class="radar-check-row">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span class="radar-check-dot ${item.ok ? 'dot-ok' : 'dot-wait'}"></span>
+                            <span style="color:#c9d1d9;">${item.label}</span>
+                        </div>
+                        <span style="color:${item.ok ? '#3fb950' : '#8b949e'}; font-family:monospace; font-size:0.75rem;">
+                            ${item.ok ? '✓ ' : '⏳ '}${item.val}
+                        </span>
+                    </div>
+                `).join('');
+            }
+
+            // 3. Engine 2 Card
+            const e2 = data.engine_2 || {};
+            const elE2Badge = document.getElementById('e2-state-badge');
+            if (elE2Badge) {
+                elE2Badge.innerText = e2.state || 'SCANNING';
+                elE2Badge.className = 'badge ' + (e2.state_badge || 'badge-cyan');
+            }
+
+            const elE2DemLvl = document.getElementById('e2-demand-level');
+            const elE2DemDist = document.getElementById('e2-demand-dist');
+            const elE2SupLvl = document.getElementById('e2-supply-level');
+            const elE2SupDist = document.getElementById('e2-supply-dist');
+
+            if (elE2DemLvl && e2.nearest_demand) elE2DemLvl.innerText = `$${e2.nearest_demand.bottom || 0} - $${e2.nearest_demand.top || 0}`;
+            if (elE2DemDist && e2.dist_demand_pips !== undefined) elE2DemDist.innerText = `${e2.dist_demand_pips} pips away`;
+            if (elE2SupLvl && e2.nearest_supply) elE2SupLvl.innerText = `$${e2.nearest_supply.bottom || 0} - $${e2.nearest_supply.top || 0}`;
+            if (elE2SupDist && e2.dist_supply_pips !== undefined) elE2SupDist.innerText = `${e2.dist_supply_pips} pips away`;
+
+            // Checklist E2
+            const elE2Checks = document.getElementById('e2-checklist-container');
+            if (elE2Checks && e2.checklist) {
+                elE2Checks.innerHTML = e2.checklist.map(item => `
+                    <div class="radar-check-row">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span class="radar-check-dot ${item.ok ? 'dot-ok' : 'dot-wait'}"></span>
+                            <span style="color:#c9d1d9;">${item.label}</span>
+                        </div>
+                        <span style="color:${item.ok ? '#3fb950' : '#8b949e'}; font-family:monospace; font-size:0.75rem;">
+                            ${item.ok ? '✓ ' : '⏳ '}${item.val}
+                        </span>
+                    </div>
+                `).join('');
+            }
+
+            // 4. Governor Box
+            const acc = data.account || {};
+            const elLot = document.getElementById('radar-calc-lot');
+            const elRisk = document.getElementById('radar-risk-dollar');
+            const elCap = document.getElementById('radar-daily-cap');
+
+            if (elLot && acc.estimated_lot) elLot.innerText = `${acc.estimated_lot} Lots`;
+            if (elRisk && acc.risk_dollar) elRisk.innerText = `$${acc.risk_dollar} (${acc.base_risk_pct || 0.5}%)`;
+            if (elCap) elCap.innerText = '-$100.00';
+
+            // 5. Render Chart Series
+            renderRadarChartSeries(data);
+        }
+
+        function renderRadarChartSeries(data) {
+            if (!radarChart || !radarCandleSeries) return;
+
+            const rawBars = (radarTimeframe === 'M1' ? data.bars_m1 : data.bars_m15) || [];
+            if (!rawBars.length) return;
+
+            const map = new Map();
+            rawBars.forEach(b => map.set(b.time, b));
+            const sortedBars = Array.from(map.values()).sort((a, b) => a.time - b.time);
+
+            const candleData = sortedBars.map(b => ({
+                time: b.time,
+                open: b.open,
+                high: b.high,
+                low: b.low,
+                close: b.close
+            }));
+
+            radarCandleSeries.setData(candleData);
+
+            if (radarTimeframe === 'M1') {
+                const e1 = data.engine_1 || {};
+                const vwapVal = e1.vwap;
+                const upperVal = e1.upper_band;
+                const lowerVal = e1.lower_band;
+                const emaVal = e1.macro_ema50;
+
+                if (vwapVal && radarVwapSeries) {
+                    const vwapData = sortedBars.map(b => ({
+                        time: b.time,
+                        value: b.vwap !== undefined ? b.vwap : vwapVal
+                    }));
+                    radarVwapSeries.setData(vwapData);
+                }
+                if (upperVal && radarUpperSeries) {
+                    const upperData = sortedBars.map(b => ({
+                        time: b.time,
+                        value: b.upper !== undefined ? b.upper : upperVal
+                    }));
+                    radarUpperSeries.setData(upperData);
+                }
+                if (lowerVal && radarLowerSeries) {
+                    const lowerData = sortedBars.map(b => ({
+                        time: b.time,
+                        value: b.lower !== undefined ? b.lower : lowerVal
+                    }));
+                    radarLowerSeries.setData(lowerData);
+                }
+                if (emaVal && radarEmaSeries) {
+                    const emaData = sortedBars.map(b => ({
+                        time: b.time,
+                        value: emaVal
+                    }));
+                    radarEmaSeries.setData(emaData);
+                }
+            } else {
+                if (radarVwapSeries) radarVwapSeries.setData([]);
+                if (radarUpperSeries) radarUpperSeries.setData([]);
+                if (radarLowerSeries) radarLowerSeries.setData([]);
+                if (radarEmaSeries) radarEmaSeries.setData([]);
+            }
+
+            const elBarStatus = document.getElementById('radar-bar-status');
+            if (elBarStatus && sortedBars.length > 0) {
+                elBarStatus.innerText = `Viewing ${sortedBars.length} bars (${radarTimeframe}) | Last: $${sortedBars[sortedBars.length - 1].close.toFixed(2)}`;
             }
         }
 

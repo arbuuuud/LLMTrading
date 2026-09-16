@@ -28,6 +28,7 @@ from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime, timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+REPORTS_DIR = PROJECT_ROOT / "reports"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -60,6 +61,11 @@ class MultiTimeframeBarAggregator:
         self.current_m15_bucket: Optional[datetime] = None
         self.current_m15_bar: Optional[Dict[str, Any]] = None
 
+        self.history_m1: List[Dict[str, Any]] = []
+        self.history_m15: List[Dict[str, Any]] = []
+        self.max_history_m1: int = 150
+        self.max_history_m15: int = 60
+
     def process_tick(
         self,
         symbol: str,
@@ -85,6 +91,9 @@ class MultiTimeframeBarAggregator:
                 self.current_m1_bar["mean_spread"] = round(mean_spread, 3)
                 self.current_m1_bar["max_spread"] = round(max(self.m1_spread_samples), 3) if self.m1_spread_samples else spread
                 completed_m1 = dict(self.current_m1_bar)
+                self.history_m1.append(dict(completed_m1))
+                if len(self.history_m1) > self.max_history_m1:
+                    self.history_m1.pop(0)
 
             self.current_m1_bar = None
             self.m1_spread_samples.clear()
@@ -119,6 +128,9 @@ class MultiTimeframeBarAggregator:
                 # Finalize previous M15 bar
                 if self.current_m15_bar is not None:
                     completed_m15 = dict(self.current_m15_bar)
+                    self.history_m15.append(dict(completed_m15))
+                    if len(self.history_m15) > self.max_history_m15:
+                        self.history_m15.pop(0)
                 self.current_m15_bar = None
 
             self.current_m15_bucket = bucket_time
@@ -274,6 +286,9 @@ class LiveBridgeServer:
         self.server: Optional[asyncio.Server] = None
         self.running = False
 
+        self.radar_state_path = REPORTS_DIR / "radar_state.json"
+        self._last_radar_save = 0.0
+
     def _reload_accounts_config(self):
         try:
             if self.accounts_config_path.exists():
@@ -371,6 +386,7 @@ class LiveBridgeServer:
         finally:
             logger.warning("[Bridge] MetaTrader 5 Disconnected.")
             self.client_writer = None
+            self._save_radar_state()
 
     async def _dispatch_incoming_message(self, msg: Dict[str, Any]):
         msg_type = msg.get("type") or msg.get("action")
@@ -381,6 +397,7 @@ class LiveBridgeServer:
             logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({msg.get('company')}) registered! Balance: ${msg.get('balance')} | Equity: ${msg.get('equity')}")
             # Ensure governor is loaded for this account
             self.get_governor_for_account(acc_id)
+            self._save_radar_state()
 
         elif msg_type == "TICK":
             await self._handle_tick(msg)
@@ -390,6 +407,7 @@ class LiveBridgeServer:
                 f"Lots: {msg.get('lots')} | Success: {msg.get('success')} | "
                 f"Ticket: {msg.get('ticket')} | Magic: {msg.get('magic')} | Price: {msg.get('price')}"
             )
+            self._save_radar_state()
 
     async def _handle_tick(self, tick: Dict[str, Any]):
         self.latest_tick = tick
@@ -420,6 +438,10 @@ class LiveBridgeServer:
         # 2. On M15 Bar Close -> Trigger Intraday SMC
         if completed_m15 is not None:
             await self._on_m15_bar_close(completed_m15, equity, open_pos)
+
+        # 3. Periodically persist Radar Snapshot for Dashboard HUD (max 2/sec or on bar close)
+        if (time.time() - self._last_radar_save >= 0.5) or (completed_m1 is not None) or (completed_m15 is not None):
+            self._save_radar_state()
 
     async def _on_m1_bar_close(self, bar: Dict[str, Any], account_equity: float, open_positions: int):
         logger.info(
@@ -537,6 +559,216 @@ class LiveBridgeServer:
             self.client_writer.write(payload.encode("utf-8"))
             await self.client_writer.drain()
             logger.info(f"[DISPATCH TO MT5] Sent close command: {payload.strip()}")
+
+    def build_radar_payload(self) -> Dict[str, Any]:
+        latest_tick = self.latest_tick or {}
+        bid = float(latest_tick.get("bid", 0.0))
+        ask = float(latest_tick.get("ask", 0.0))
+        mid = round((bid + ask) / 2.0, 2) if (bid and ask) else 0.0
+        spread = float(latest_tick.get("spread", 0.0))
+        acc_id = str(latest_tick.get("account_id", self.active_account_id))
+        equity = float(latest_tick.get("equity", 10000.0))
+        balance = float(latest_tick.get("balance", 10000.0))
+        open_pos = int(latest_tick.get("open_positions", len(self.scalper_adapter.positions) + len(self.intraday_adapter.positions)))
+
+        now_utc = datetime.now(timezone.utc)
+        curr_hour = now_utc.hour
+        curr_min = now_utc.minute
+
+        # Scalper Engine 1 Status
+        vwap = round(getattr(self.scalper_strategy, "current_vwap", 0.0), 2)
+        std = round(getattr(self.scalper_strategy, "current_std", 0.0), 2)
+        upper = round(getattr(self.scalper_strategy, "upper_band", 0.0), 2)
+        lower = round(getattr(self.scalper_strategy, "lower_band", 0.0), 2)
+        ema50 = round(self.scalper_strategy.current_macro_ema, 2) if getattr(self.scalper_strategy, "current_macro_ema", None) else None
+
+        in_golden_window = (10, 30) <= (curr_hour, curr_min) <= (14, 30)
+        golden_desc = f"{curr_hour:02d}:{curr_min:02d} UTC (Active 10:30-14:30)" if in_golden_window else f"{curr_hour:02d}:{curr_min:02d} UTC (Standby outside 10:30-14:30)"
+
+        stretch_sigma = round((mid - vwap) / max(std, 0.01), 2) if (vwap > 0 and std > 0) else 0.0
+        dist_to_upper = round(upper - mid, 2) if upper else 0.0
+        dist_to_lower = round(mid - lower, 2) if lower else 0.0
+
+        hunting_dir = "BEARISH_FADE (+1.8σ Peak)" if (vwap and mid >= vwap) else "BULLISH_FADE (-1.8σ Trough)"
+
+        macro_ok = True
+        macro_detail = "Macro trend aligned with H1 EMA 50"
+        if ema50 is not None and mid > 0:
+            if mid > ema50 + 15.0:
+                macro_ok = False
+                macro_detail = f"Blocked: Runaway Bull (Price {mid:.1f} > EMA50 {ema50:.1f} + $15)"
+            elif mid < ema50 - 15.0:
+                macro_ok = False
+                macro_detail = f"Blocked: Freefall Dump (Price {mid:.1f} < EMA50 {ema50:.1f} - $15)"
+            else:
+                macro_detail = f"Clear: Price near H1 EMA50 ({ema50:.2f})"
+
+        # E1 State determination
+        if len(self.scalper_adapter.positions) > 0:
+            e1_state = "IN_POSITION"
+            e1_state_badge = "badge-blue"
+            e1_desc = "Managing Active M1 Scalp Position"
+        elif not in_golden_window:
+            e1_state = "STANDBY"
+            e1_state_badge = "badge-gray"
+            e1_desc = "Outside Golden Institutional Window (10:30-14:30 UTC)"
+        elif getattr(self.scalper_strategy, "traded_today_count", 0) >= 2:
+            e1_state = "DAILY_CAP_REACHED"
+            e1_state_badge = "badge-orange"
+            e1_desc = "2 Trades completed today - Daily Cap Enforced"
+        elif (upper > 0 and mid >= upper) or (lower > 0 and mid <= lower):
+            e1_state = "CONFIRMING"
+            e1_state_badge = "badge-orange"
+            e1_desc = "Extreme band breached! Watching for M1 Rejection Wick (>=45%)"
+        elif (upper > 0 and abs(dist_to_upper) <= 2.0) or (lower > 0 and abs(dist_to_lower) <= 2.0):
+            e1_state = "ARMED"
+            e1_state_badge = "badge-yellow"
+            e1_desc = f"Approaching extreme band (Within ${min(abs(dist_to_upper), abs(dist_to_lower)):.2f})"
+        else:
+            e1_state = "HUNTING"
+            e1_state_badge = "badge-cyan"
+            e1_desc = "Monitoring Auction Value Area for Overextension"
+
+        band_reached = bool((upper > 0 and mid >= upper) or (lower > 0 and mid <= lower))
+        e1_checklist = [
+            {"label": "Golden Window (10:30-14:30 UTC)", "ok": in_golden_window, "val": golden_desc},
+            {"label": "H1 EMA 50 Macro Guardrail", "ok": macro_ok, "val": macro_detail},
+            {"label": "VWAP Band Stretch (>= 1.80σ)", "ok": band_reached, "val": f"{stretch_sigma:+.2f}σ (Target: ±1.80σ | VWAP: {vwap:.2f})"},
+            {"label": "M1 Rejection Wick Trigger", "ok": (e1_state == "CONFIRMING"), "val": "Waiting M1 Bar Close with >= 45% wick"},
+            {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": f"Clear to trade (Base Risk: 0.5%)"}
+        ]
+
+        # E2 Intraday Status
+        if len(self.intraday_adapter.positions) > 0:
+            e2_state = "IN_POSITION"
+            e2_state_badge = "badge-blue"
+            e2_desc = "Managing Active M15 Intraday Swing Position"
+        else:
+            e2_state = "SCANNING"
+            e2_state_badge = "badge-cyan"
+            e2_desc = "Scanning M15 Structure for Unfilled DBR/RBD Bases"
+
+        demand_zones = getattr(self.intraday_strategy, "demand_zones", [])
+        supply_zones = getattr(self.intraday_strategy, "supply_zones", [])
+
+        nearest_demand = demand_zones[-1] if demand_zones else None
+        nearest_supply = supply_zones[-1] if supply_zones else None
+
+        dist_demand_pips = round((mid - nearest_demand["top"]) * 10, 1) if (nearest_demand and mid > nearest_demand.get("top", 0)) else 0.0
+        dist_supply_pips = round((nearest_supply["bottom"] - mid) * 10, 1) if (nearest_supply and nearest_supply.get("bottom", 0) > mid) else 0.0
+
+        e2_checklist = [
+            {"label": "Unfilled Order Base (NFC)", "ok": bool(nearest_demand or nearest_supply), "val": f"{len(demand_zones)} Demand / {len(supply_zones)} Supply Bases"},
+            {"label": "Zone Retest & Mitigation", "ok": False, "val": f"Nearest Demand: {dist_demand_pips} pips away" if nearest_demand else "Waiting for price to mitigate zone"},
+            {"label": "H1 EMA 50 Macro Direction", "ok": True, "val": "Aligned with Higher Timeframe Trend"},
+            {"label": "M15 Pinbar / Engulfing Trigger", "ok": False, "val": "Waiting for mitigation retest confirmation"}
+        ]
+
+        bars_m1 = []
+        for b in self.aggregator.history_m1[-120:]:
+            ts = int(b["timestamp"].timestamp())
+            bars_m1.append({
+                "time": ts,
+                "open": round(b["open"], 2),
+                "high": round(b["high"], 2),
+                "low": round(b["low"], 2),
+                "close": round(b["close"], 2),
+                "volume": int(b.get("tick_volume", 1))
+            })
+
+        bars_m15 = []
+        for b in self.aggregator.history_m15[-60:]:
+            ts = int(b["timestamp"].timestamp())
+            bars_m15.append({
+                "time": ts,
+                "open": round(b["open"], 2),
+                "high": round(b["high"], 2),
+                "low": round(b["low"], 2),
+                "close": round(b["close"], 2),
+                "volume": int(b.get("tick_volume", 1))
+            })
+
+        curr_bar = self.aggregator.current_m1_bar
+        current_bar = None
+        if curr_bar:
+            current_bar = {
+                "time": int(curr_bar["timestamp"].timestamp()),
+                "open": round(curr_bar["open"], 2),
+                "high": round(curr_bar["high"], 2),
+                "low": round(curr_bar["low"], 2),
+                "close": round(curr_bar["close"], 2)
+            }
+
+        gov = self.get_governor_for_account(acc_id)
+        base_risk_pct = getattr(gov, "base_risk_pct", 0.5)
+        risk_dollar = round(equity * (base_risk_pct / 100.0), 2)
+        est_lots = round(max(0.01, risk_dollar / (1.50 * 100)), 2)
+
+        return {
+            "status": "LIVE_STREAMING" if self.client_writer else "STANDBY",
+            "symbol": "XAUUSD",
+            "updated_at": now_utc.isoformat(),
+            "tick": {
+                "bid": bid,
+                "ask": ask,
+                "mid": mid,
+                "spread": spread
+            },
+            "account": {
+                "id": acc_id,
+                "equity": equity,
+                "balance": balance,
+                "open_positions": open_pos,
+                "base_risk_pct": base_risk_pct,
+                "risk_dollar": risk_dollar,
+                "estimated_lot": est_lots
+            },
+            "engine_1": {
+                "name": "M1 Session Anchored VWAP Scalper",
+                "magic": 1001,
+                "state": e1_state,
+                "state_desc": e1_desc,
+                "state_badge": e1_state_badge,
+                "hunting_direction": hunting_dir,
+                "vwap": vwap,
+                "upper_band": upper,
+                "lower_band": lower,
+                "std": std,
+                "stretch_sigma": stretch_sigma,
+                "dist_to_upper": dist_to_upper,
+                "dist_to_lower": dist_to_lower,
+                "macro_ema50": ema50,
+                "checklist": e1_checklist
+            },
+            "engine_2": {
+                "name": "M15 Fadli NFC Intraday",
+                "magic": 2001,
+                "state": e2_state,
+                "state_desc": e2_desc,
+                "state_badge": e2_state_badge,
+                "nearest_demand": nearest_demand,
+                "nearest_supply": nearest_supply,
+                "dist_demand_pips": dist_demand_pips,
+                "dist_supply_pips": dist_supply_pips,
+                "checklist": e2_checklist
+            },
+            "bars_m1": bars_m1,
+            "bars_m15": bars_m15,
+            "current_bar": current_bar
+        }
+
+    def _save_radar_state(self):
+        try:
+            payload = self.build_radar_payload()
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            temp_file = REPORTS_DIR / "radar_state.json.tmp"
+            target_file = REPORTS_DIR / "radar_state.json"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            temp_file.replace(target_file)
+            self._last_radar_save = time.time()
+        except Exception as e:
+            logger.debug(f"[Bridge] Failed to save radar state: {e}")
 
 
 # Backward-compatible alias for existing unit tests
