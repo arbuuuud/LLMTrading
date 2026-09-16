@@ -357,7 +357,7 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
             return self._send_json(get_radar_snapshot_for_dashboard())
 
         # 2. Static File Serving (Dashboard, Visualizer, Reports)
-        if path in ("/", "/index.html", "/dashboard"):
+        if path in ("/", "/index.html", "/dashboard", "/radar"):
             filepath = REPORTS_DIR / "index.html"
         else:
             rel = path.lstrip("/")

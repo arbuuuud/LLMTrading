@@ -3004,8 +3004,11 @@
                     const ud = document.getElementById('user-display');
                     if (ud) ud.textContent = savedEmail;
                 }
-                const savedTab = localStorage.getItem('llm_active_tab') || 'RADAR';
-                switchMainTab(savedTab);
+                let targetTab = localStorage.getItem('llm_active_tab') || 'RADAR';
+                if (window.location.pathname === '/radar' || window.location.hash === '#radar') {
+                    targetTab = 'RADAR';
+                }
+                switchMainTab(targetTab);
             } else {
                 document.getElementById('login-modal-overlay').style.display = 'flex';
             }
