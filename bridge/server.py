@@ -824,11 +824,26 @@ class LiveBridgeServer:
             e1_desc = "Monitoring Auction Value Area for Overextension"
 
         band_reached = bool((upper > 0 and mid >= upper) or (lower > 0 and mid <= lower))
+        sec_left = 60 - now_utc.second
+
+        if e1_state == "IN_POSITION":
+            wick_status_ok = True
+            wick_desc = "Order Executed & Active"
+        elif e1_state == "CONFIRMING":
+            wick_status_ok = False
+            wick_desc = f"Band breached! Evaluating wick at :00s ({sec_left}s left)"
+        elif e1_state == "ARMED":
+            wick_status_ok = False
+            wick_desc = f"Approaching band. Evaluates at :00s ({sec_left}s left)"
+        else:
+            wick_status_ok = False
+            wick_desc = "Waiting for price to reach ±1.80σ band"
+
         e1_checklist = [
             {"label": "Golden Window (10:30-14:30 UTC)", "ok": in_golden_window, "val": golden_desc},
             {"label": "H1 EMA 50 Macro Guardrail", "ok": macro_ok, "val": macro_detail},
             {"label": "VWAP Band Stretch (>= 1.80σ)", "ok": band_reached, "val": f"{stretch_sigma:+.2f}σ (Target: ±1.80σ | VWAP: {vwap:.2f})"},
-            {"label": "M1 Rejection Wick Trigger", "ok": (e1_state == "CONFIRMING"), "val": "Waiting M1 Bar Close with >= 45% wick"},
+            {"label": "M1 Rejection Wick Trigger", "ok": wick_status_ok, "val": wick_desc},
             {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": f"Clear to trade (Base Risk: 0.5%)"}
         ]
 
