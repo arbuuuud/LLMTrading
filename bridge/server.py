@@ -18,6 +18,7 @@ Architecture:
 """
 
 import sys
+import time
 import asyncio
 import json
 import yaml
@@ -361,6 +362,8 @@ class LiveBridgeServer:
                             await self._dispatch_incoming_message(msg)
                         except json.JSONDecodeError:
                             logger.error(f"[Bridge] Invalid JSON payload from MT5: {line}")
+                        except Exception as e:
+                            logger.error(f"[Bridge] Error processing message from MT5: {e}", exc_info=True)
         except asyncio.CancelledError:
             pass
         except Exception as e:

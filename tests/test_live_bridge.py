@@ -132,6 +132,61 @@ class TestLiveBridge(unittest.TestCase):
 
         asyncio.run(run_socket_test())
 
+    def test_handshake_register_and_resilience(self):
+        async def run_resilience_test():
+            server = LiveBridgeServer(host="127.0.0.1", port=5558, dry_run=True)
+            server_task = asyncio.create_task(server.start())
+
+            await asyncio.sleep(0.2)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", 5558)
+
+            # 1. Send REGISTER message (triggers get_governor_for_account with time.time())
+            reg_msg = {
+                "type": "REGISTER",
+                "account_id": "10001",
+                "company": "ICMarkets",
+                "balance": 10000.0,
+                "equity": 10000.0
+            }
+            writer.write((json.dumps(reg_msg) + "\n").encode("utf-8"))
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            self.assertEqual(server.active_account_id, "10001")
+            self.assertIn("10001", server.governors)
+
+            # 2. Send malformed line (test resilience - should not crash bridge or disconnect MT5)
+            writer.write(b"MALFORMED_NON_JSON_LINE\n")
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            # 3. Send valid TICK and verify server is still connected and operational
+            tick = {
+                "type": "TICK",
+                "symbol": "XAUUSD",
+                "bid": 3310.0,
+                "ask": 3310.20,
+                "spread": 0.20,
+                "time": 1748342400000,
+                "equity": 10000.0,
+                "open_positions": 0,
+                "account_id": "10001"
+            }
+            writer.write((json.dumps(tick) + "\n").encode("utf-8"))
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            self.assertIsNotNone(server.latest_tick)
+            self.assertEqual(server.latest_tick["symbol"], "XAUUSD")
+
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+            server_task.cancel()
+
+        asyncio.run(run_resilience_test())
+
 
 if __name__ == "__main__":
     unittest.main()
