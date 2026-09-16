@@ -263,6 +263,12 @@ void ProcessCommand(string cmdJson)
       return;
    }
 
+   if(action == "SYNC_BARS")
+   {
+      SyncHistoricalBars();
+      return;
+   }
+
    if(action == "ORDER")
    {
       string symbol    = ExtractJsonString(cmdJson, "symbol");

@@ -2695,7 +2695,10 @@
                 timeScale: {
                     borderColor: '#30363d',
                     timeVisible: true,
-                    secondsVisible: false
+                    secondsVisible: false,
+                    rightOffset: 8,
+                    barSpacing: 10,
+                    minBarSpacing: 4
                 }
             });
 
@@ -2927,6 +2930,7 @@
             const rawBars = (radarTimeframe === 'M1' ? data.bars_m1 : data.bars_m15) || [];
             if (!rawBars.length) return;
 
+            // 1. Deduplicate by timestamp
             const map = new Map();
             rawBars.forEach(b => {
                 if (b && b.time && !isNaN(b.open) && !isNaN(b.high) && !isNaN(b.low) && !isNaN(b.close)) {
@@ -2934,24 +2938,40 @@
                 }
             });
 
-            // Include live forming bar on M1 if available
+            // 2. Include live forming bar on M1 if available
             if (radarTimeframe === 'M1' && data.current_bar) {
                 const cb = data.current_bar;
                 if (cb && cb.time && !isNaN(cb.open) && !isNaN(cb.close)) {
-                    map.set(cb.time, cb);
+                    const existing = map.get(cb.time);
+                    if (existing) {
+                        existing.high = Math.max(existing.high, Number(cb.high));
+                        existing.low = Math.min(existing.low, Number(cb.low));
+                        existing.close = Number(cb.close);
+                    } else {
+                        map.set(cb.time, cb);
+                    }
                 }
             }
 
             const sortedBars = Array.from(map.values()).sort((a, b) => a.time - b.time);
             if (!sortedBars.length) return;
 
-            const candleData = sortedBars.map(b => ({
-                time: b.time,
-                open: Number(b.open),
-                high: Number(b.high),
-                low: Number(b.low),
-                close: Number(b.close)
-            }));
+            // 3. Strict Monotonic Filter: t[i] > t[i-1] (guarantees NO duplicates, NO reverse time)
+            const cleanCandles = [];
+            let lastT = -1;
+            for (let b of sortedBars) {
+                if (b.time > lastT) {
+                    cleanCandles.push({
+                        time: b.time,
+                        open: Number(b.open),
+                        high: Number(b.high),
+                        low: Number(b.low),
+                        close: Number(b.close)
+                    });
+                    lastT = b.time;
+                }
+            }
+            if (!cleanCandles.length) return;
 
             const e1 = data.engine_1 || {};
             const vwapVal = Number(e1.vwap);
@@ -2959,24 +2979,33 @@
             const lowerVal = Number(e1.lower_band);
             const emaVal = Number(e1.macro_ema50);
 
-            const vwapData = sortedBars
-                .filter(b => (b.vwap !== undefined && !isNaN(b.vwap)) || (vwapVal > 0))
-                .map(b => ({ time: b.time, value: Number(b.vwap !== undefined ? b.vwap : vwapVal) }));
-            const upperData = sortedBars
-                .filter(b => (b.upper !== undefined && !isNaN(b.upper)) || (upperVal > 0))
-                .map(b => ({ time: b.time, value: Number(b.upper !== undefined ? b.upper : upperVal) }));
-            const lowerData = sortedBars
-                .filter(b => (b.lower !== undefined && !isNaN(b.lower)) || (lowerVal > 0))
-                .map(b => ({ time: b.time, value: Number(b.lower !== undefined ? b.lower : lowerVal) }));
-            const emaData = (emaVal > 0) ? sortedBars.map(b => ({ time: b.time, value: emaVal })) : [];
+            const vwapData = cleanCandles.map(c => {
+                const src = map.get(c.time);
+                const val = (src && src.vwap !== undefined && !isNaN(src.vwap)) ? Number(src.vwap) : vwapVal;
+                return { time: c.time, value: val };
+            }).filter(d => d.value > 0);
+
+            const upperData = cleanCandles.map(c => {
+                const src = map.get(c.time);
+                const val = (src && src.upper !== undefined && !isNaN(src.upper)) ? Number(src.upper) : upperVal;
+                return { time: c.time, value: val };
+            }).filter(d => d.value > 0);
+
+            const lowerData = cleanCandles.map(c => {
+                const src = map.get(c.time);
+                const val = (src && src.lower !== undefined && !isNaN(src.lower)) ? Number(src.lower) : lowerVal;
+                return { time: c.time, value: val };
+            }).filter(d => d.value > 0);
+
+            const emaData = (emaVal > 0) ? cleanCandles.map(c => ({ time: c.time, value: emaVal })) : [];
 
             const isInitial = !radarInitialFitDone[radarTimeframe];
-            const barCountDiff = Math.abs(sortedBars.length - radarLastBarsCount[radarTimeframe]);
+            const barCountDiff = Math.abs(cleanCandles.length - radarLastBarsCount[radarTimeframe]);
 
-            // Initial load or major structural reload: full setData + fitContent() ONCE
+            // Initial load or major batch update: full setData + fitContent() ONCE
             if (isInitial || barCountDiff > 3) {
                 try {
-                    radarCandleSeries.setData(candleData);
+                    radarCandleSeries.setData(cleanCandles);
                     if (radarTimeframe === 'M1') {
                         if (vwapData.length) radarVwapSeries.setData(vwapData);
                         if (upperData.length) radarUpperSeries.setData(upperData);
@@ -2993,14 +3022,14 @@
                         radarChart.timeScale().fitContent();
                         radarInitialFitDone[radarTimeframe] = true;
                     }
-                    radarLastBarsCount[radarTimeframe] = sortedBars.length;
-                    radarLastBarTime[radarTimeframe] = sortedBars[sortedBars.length - 1].time;
+                    radarLastBarsCount[radarTimeframe] = cleanCandles.length;
+                    radarLastBarTime[radarTimeframe] = cleanCandles[cleanCandles.length - 1].time;
                 } catch (err) {
                     console.error("Error setting candle data:", err);
                 }
             } else {
                 // Smooth incremental 1-second update (NO fitContent(), NO canvas flickering!)
-                const lastCandle = candleData[candleData.length - 1];
+                const lastCandle = cleanCandles[cleanCandles.length - 1];
                 try {
                     radarCandleSeries.update(lastCandle);
                     if (radarTimeframe === 'M1') {
@@ -3010,9 +3039,9 @@
                         if (emaData.length) radarEmaSeries.update(emaData[emaData.length - 1]);
                     }
                     radarLastBarTime[radarTimeframe] = lastCandle.time;
-                    radarLastBarsCount[radarTimeframe] = sortedBars.length;
+                    radarLastBarsCount[radarTimeframe] = cleanCandles.length;
                 } catch (err) {
-                    radarCandleSeries.setData(candleData);
+                    radarCandleSeries.setData(cleanCandles);
                 }
             }
 
@@ -3020,8 +3049,8 @@
             if (loadingEl) loadingEl.style.display = 'none';
 
             const elBarStatus = document.getElementById('radar-bar-status');
-            if (elBarStatus && sortedBars.length > 0) {
-                elBarStatus.innerText = `Viewing ${sortedBars.length} bars (${radarTimeframe}) | Last: $${sortedBars[sortedBars.length - 1].close.toFixed(2)}`;
+            if (elBarStatus && cleanCandles.length > 0) {
+                elBarStatus.innerText = `Viewing ${cleanCandles.length} bars (${radarTimeframe}) | Last: $${cleanCandles[cleanCandles.length - 1].close.toFixed(2)}`;
             }
         }
 

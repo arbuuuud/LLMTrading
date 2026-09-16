@@ -212,7 +212,10 @@ class MultiTimeframeBarAggregator:
                 self.current_m1_bar["mean_spread"] = round(mean_spread, 3)
                 self.current_m1_bar["max_spread"] = round(max(self.m1_spread_samples), 3) if self.m1_spread_samples else spread
                 completed_m1 = dict(self.current_m1_bar)
-                self.history_m1.append(dict(completed_m1))
+                if self.history_m1 and self.history_m1[-1]["timestamp"] == completed_m1["timestamp"]:
+                    self.history_m1[-1] = dict(completed_m1)
+                else:
+                    self.history_m1.append(dict(completed_m1))
                 if len(self.history_m1) > self.max_history_m1:
                     self.history_m1.pop(0)
 
@@ -249,7 +252,10 @@ class MultiTimeframeBarAggregator:
                 # Finalize previous M15 bar
                 if self.current_m15_bar is not None:
                     completed_m15 = dict(self.current_m15_bar)
-                    self.history_m15.append(dict(completed_m15))
+                    if self.history_m15 and self.history_m15[-1]["timestamp"] == completed_m15["timestamp"]:
+                        self.history_m15[-1] = dict(completed_m15)
+                    else:
+                        self.history_m15.append(dict(completed_m15))
                     if len(self.history_m15) > self.max_history_m15:
                         self.history_m15.pop(0)
                 self.current_m15_bar = None
@@ -518,6 +524,11 @@ class LiveBridgeServer:
             logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({msg.get('company')}) registered! Balance: ${msg.get('balance')} | Equity: ${msg.get('equity')}")
             # Ensure governor is loaded for this account
             self.get_governor_for_account(acc_id)
+            if self.client_writer:
+                try:
+                    self.client_writer.write((json.dumps({"action": "SYNC_BARS"}) + "\n").encode("utf-8"))
+                except Exception:
+                    pass
             self._save_radar_state()
 
         elif msg_type == "BAR_SYNC":
@@ -547,7 +558,11 @@ class LiveBridgeServer:
         symbol = msg.get("symbol", "XAUUSD")
 
         # Ingest bars into aggregator history
-        self.aggregator.baseline_aligned = True
+        if batch == 1:
+            self.aggregator.history_m1.clear()
+            self.aggregator.history_m15.clear()
+            self.aggregator.baseline_aligned = True
+
         self.aggregator.ingest_historical_bars(bars, symbol)
 
         # Update scalper VWAP and H1 EMA
@@ -847,8 +862,15 @@ class LiveBridgeServer:
         cum_vol = 0.0
         cum_pv = 0.0
         cum_p2v = 0.0
-        for b in self.aggregator.history_m1[-120:]:
+
+        bar_dict = {}
+        for b in self.aggregator.history_m1:
             ts = int(b["timestamp"].timestamp())
+            bar_dict[ts] = b
+
+        sorted_ts = sorted(bar_dict.keys())
+        for ts in sorted_ts[-120:]:
+            b = bar_dict[ts]
             o = round(b["open"], 2)
             h = round(b["high"], 2)
             l = round(b["low"], 2)
