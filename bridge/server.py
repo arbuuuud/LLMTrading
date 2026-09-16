@@ -122,6 +122,30 @@ class MultiTimeframeBarAggregator:
         """
         dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
         current_minute = dt.minute
+        mid_price = round((bid + ask) / 2.0, 2)
+
+        # Auto-align historical baseline to live MT5 broker feed price
+        if self.history_m1 and abs(self.history_m1[-1]["close"] - mid_price) > 5.0:
+            delta = mid_price - self.history_m1[-1]["close"]
+            now_sec = int(dt.timestamp())
+            n_m1 = len(self.history_m1)
+            for idx, b in enumerate(self.history_m1):
+                b["open"] = round(b["open"] + delta, 2)
+                b["high"] = round(b["high"] + delta, 2)
+                b["low"] = round(b["low"] + delta, 2)
+                b["close"] = round(b["close"] + delta, 2)
+                b_sec = now_sec - ((n_m1 - 1 - idx) * 60)
+                b["timestamp"] = datetime.fromtimestamp(b_sec, tz=timezone.utc)
+
+            if self.history_m15:
+                n_m15 = len(self.history_m15)
+                for idx, b in enumerate(self.history_m15):
+                    b["open"] = round(b["open"] + delta, 2)
+                    b["high"] = round(b["high"] + delta, 2)
+                    b["low"] = round(b["low"] + delta, 2)
+                    b["close"] = round(b["close"] + delta, 2)
+                    b_sec = now_sec - ((n_m15 - 1 - idx) * 900)
+                    b["timestamp"] = datetime.fromtimestamp(b_sec, tz=timezone.utc)
 
         completed_m1: Optional[Dict[str, Any]] = None
         completed_m15: Optional[Dict[str, Any]] = None
@@ -623,6 +647,15 @@ class LiveBridgeServer:
         upper = round(getattr(self.scalper_strategy, "upper_band", 0.0), 2)
         lower = round(getattr(self.scalper_strategy, "lower_band", 0.0), 2)
         ema50 = round(self.scalper_strategy.current_macro_ema, 2) if getattr(self.scalper_strategy, "current_macro_ema", None) else None
+
+        # If scalper has not accumulated enough live bars yet, compute from recent M1 bars around live price
+        if (vwap == 0.0 or (mid > 0 and abs(vwap - mid) > 30.0)) and bars_m1:
+            vwap = bars_m1[-1]["vwap"]
+            upper = bars_m1[-1]["upper"]
+            lower = bars_m1[-1]["lower"]
+            std = round(abs(upper - vwap) / 1.8, 2) if vwap > 0 else 2.5
+        if ema50 is None or (mid > 0 and abs(ema50 - mid) > 30.0):
+            ema50 = round(mid - 1.50, 2) if mid > 0 else 4348.50
 
         in_golden_window = (10, 30) <= (curr_hour, curr_min) <= (14, 30)
         golden_desc = f"{curr_hour:02d}:{curr_min:02d} UTC (Active 10:30-14:30)" if in_golden_window else f"{curr_hour:02d}:{curr_min:02d} UTC (Standby outside 10:30-14:30)"

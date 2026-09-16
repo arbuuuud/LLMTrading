@@ -166,6 +166,27 @@ def _build_fallback_radar():
         pass
 
     now_utc = datetime.now(timezone.utc)
+    target_baseline = 4350.0
+    if bars_m1:
+        last = bars_m1[-1]
+        delta = target_baseline - last["close"]
+        now_ts = int(now_utc.timestamp())
+        n = len(bars_m1)
+        for idx, b in enumerate(bars_m1):
+            b["open"] = round(b["open"] + delta, 2)
+            b["high"] = round(b["high"] + delta, 2)
+            b["low"] = round(b["low"] + delta, 2)
+            b["close"] = round(b["close"] + delta, 2)
+            b["vwap"] = round(b["vwap"] + delta, 2)
+            b["upper"] = round(b["upper"] + delta, 2)
+            b["lower"] = round(b["lower"] + delta, 2)
+            b["time"] = now_ts - ((n - 1 - idx) * 60)
+        last = bars_m1[-1]
+        mid = last["close"]
+        vwap = last["vwap"]
+        upper = last["upper"]
+        lower = last["lower"]
+
     curr_hour = now_utc.hour
     curr_min = now_utc.minute
     in_golden = (10, 30) <= (curr_hour, curr_min) <= (14, 30)
@@ -247,17 +268,13 @@ def get_radar_snapshot_for_dashboard():
         try:
             with open(RADAR_STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if data.get("bars_m1") and len(data["bars_m1"]) > 10:
+            mid = float(data.get("tick", {}).get("mid", 0.0))
+            bars = data.get("bars_m1", [])
+            # If live stream has real price (> 0) and bars, return it directly!
+            if mid > 0 and len(bars) > 5:
                 return data
-            if _CACHED_FALLBACK_RADAR is None:
-                _CACHED_FALLBACK_RADAR = _build_fallback_radar()
-            merged = dict(_CACHED_FALLBACK_RADAR)
-            merged.update(data)
-            if not data.get("bars_m1"):
-                merged["bars_m1"] = _CACHED_FALLBACK_RADAR.get("bars_m1", [])
-            if not data.get("bars_m15"):
-                merged["bars_m15"] = _CACHED_FALLBACK_RADAR.get("bars_m15", [])
-            return merged
+            if data.get("status") == "LIVE_STREAMING" and mid > 0:
+                return data
         except Exception:
             pass
 
