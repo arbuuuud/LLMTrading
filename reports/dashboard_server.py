@@ -10,13 +10,14 @@ Handles:
 
 import sys
 import os
+import socket
 import json
 import yaml
 import time
 import secrets
 import hashlib
 from pathlib import Path
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
 
@@ -177,6 +178,8 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(content)
                 return
+            except (BrokenPipeError, ConnectionResetError):
+                return
             except Exception as e:
                 self.send_error(500, f"Error reading file: {e}")
                 return
@@ -314,11 +317,33 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
         return self._send_json({"error": "Unknown POST endpoint"}, 404)
 
 
+class DualStackServer(ThreadingHTTPServer):
+    """
+    Dual-stack HTTP server that listens on both IPv4 (127.0.0.1 / 0.0.0.0)
+    and IPv6 (::1 / ::) simultaneously.
+    This resolves the common ngrok issue on macOS: 'dial tcp [::1]:8888: connection refused'.
+    """
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except (AttributeError, OSError):
+            pass
+        super().server_bind()
+
+
 def run_server(port=8888):
-    server_address = ("", port)
-    httpd = HTTPServer(server_address, InstitutionalDashboardHandler)
+    try:
+        httpd = DualStackServer(("::", port), InstitutionalDashboardHandler)
+        listen_desc = f"http://0.0.0.0:{port} (Dual-Stack IPv4 + IPv6)"
+    except Exception as e:
+        # Fallback to standard IPv4 ThreadingHTTPServer if IPv6 dual-stack is not permitted
+        httpd = ThreadingHTTPServer(("0.0.0.0", port), InstitutionalDashboardHandler)
+        listen_desc = f"http://0.0.0.0:{port} (IPv4 Only)"
+
     print("=" * 80)
-    print(f"🚀 Institutional Dashboard Server running on http://0.0.0.0:{port}")
+    print(f"🚀 Institutional Dashboard Server running on {listen_desc}")
     print(f"🔑 Admin Login: arief.setiabudi2010@gmail.com")
     print(f"📁 Managing config: {ACCOUNTS_CONFIG_PATH.resolve()}")
     print("=" * 80)
