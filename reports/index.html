@@ -2613,6 +2613,9 @@
         let radarTimeframe = 'M1';
         let radarPollTimer = null;
         let radarLastData = null;
+        let radarInitialFitDone = { M1: false, M15: false };
+        let radarLastBarsCount = { M1: 0, M15: 0 };
+        let radarLastBarTime = { M1: 0, M15: 0 };
 
         function startRadar() {
             initRadarChart();
@@ -2630,6 +2633,7 @@
 
         function switchRadarTimeframe(tf) {
             radarTimeframe = tf;
+            radarInitialFitDone[tf] = false; // Trigger smooth fitContent once on timeframe switch
             const btnM1 = document.getElementById('radar-tf-m1');
             const btnM15 = document.getElementById('radar-tf-m15');
             if (tf === 'M1') {
@@ -2914,7 +2918,10 @@
 
             const container = document.getElementById('radar-tv-chart');
             if (container && container.clientWidth > 100) {
-                radarChart.resize(container.clientWidth, 510);
+                if (radarChart.__lastWidth !== container.clientWidth) {
+                    radarChart.resize(container.clientWidth, 510);
+                    radarChart.__lastWidth = container.clientWidth;
+                }
             }
 
             const rawBars = (radarTimeframe === 'M1' ? data.bars_m1 : data.bars_m15) || [];
@@ -2926,6 +2933,15 @@
                     map.set(b.time, b);
                 }
             });
+
+            // Include live forming bar on M1 if available
+            if (radarTimeframe === 'M1' && data.current_bar) {
+                const cb = data.current_bar;
+                if (cb && cb.time && !isNaN(cb.open) && !isNaN(cb.close)) {
+                    map.set(cb.time, cb);
+                }
+            }
+
             const sortedBars = Array.from(map.values()).sort((a, b) => a.time - b.time);
             if (!sortedBars.length) return;
 
@@ -2937,57 +2953,71 @@
                 close: Number(b.close)
             }));
 
-            try {
-                radarCandleSeries.setData(candleData);
-                radarChart.timeScale().fitContent();
-            } catch (err) {
-                console.error("Error setting candle data:", err);
+            const e1 = data.engine_1 || {};
+            const vwapVal = Number(e1.vwap);
+            const upperVal = Number(e1.upper_band);
+            const lowerVal = Number(e1.lower_band);
+            const emaVal = Number(e1.macro_ema50);
+
+            const vwapData = sortedBars
+                .filter(b => (b.vwap !== undefined && !isNaN(b.vwap)) || (vwapVal > 0))
+                .map(b => ({ time: b.time, value: Number(b.vwap !== undefined ? b.vwap : vwapVal) }));
+            const upperData = sortedBars
+                .filter(b => (b.upper !== undefined && !isNaN(b.upper)) || (upperVal > 0))
+                .map(b => ({ time: b.time, value: Number(b.upper !== undefined ? b.upper : upperVal) }));
+            const lowerData = sortedBars
+                .filter(b => (b.lower !== undefined && !isNaN(b.lower)) || (lowerVal > 0))
+                .map(b => ({ time: b.time, value: Number(b.lower !== undefined ? b.lower : lowerVal) }));
+            const emaData = (emaVal > 0) ? sortedBars.map(b => ({ time: b.time, value: emaVal })) : [];
+
+            const isInitial = !radarInitialFitDone[radarTimeframe];
+            const barCountDiff = Math.abs(sortedBars.length - radarLastBarsCount[radarTimeframe]);
+
+            // Initial load or major structural reload: full setData + fitContent() ONCE
+            if (isInitial || barCountDiff > 3) {
+                try {
+                    radarCandleSeries.setData(candleData);
+                    if (radarTimeframe === 'M1') {
+                        if (vwapData.length) radarVwapSeries.setData(vwapData);
+                        if (upperData.length) radarUpperSeries.setData(upperData);
+                        if (lowerData.length) radarLowerSeries.setData(lowerData);
+                        if (emaData.length) radarEmaSeries.setData(emaData);
+                    } else {
+                        if (radarVwapSeries) radarVwapSeries.setData([]);
+                        if (radarUpperSeries) radarUpperSeries.setData([]);
+                        if (radarLowerSeries) radarLowerSeries.setData([]);
+                        if (radarEmaSeries) radarEmaSeries.setData([]);
+                    }
+
+                    if (isInitial) {
+                        radarChart.timeScale().fitContent();
+                        radarInitialFitDone[radarTimeframe] = true;
+                    }
+                    radarLastBarsCount[radarTimeframe] = sortedBars.length;
+                    radarLastBarTime[radarTimeframe] = sortedBars[sortedBars.length - 1].time;
+                } catch (err) {
+                    console.error("Error setting candle data:", err);
+                }
+            } else {
+                // Smooth incremental 1-second update (NO fitContent(), NO canvas flickering!)
+                const lastCandle = candleData[candleData.length - 1];
+                try {
+                    radarCandleSeries.update(lastCandle);
+                    if (radarTimeframe === 'M1') {
+                        if (vwapData.length) radarVwapSeries.update(vwapData[vwapData.length - 1]);
+                        if (upperData.length) radarUpperSeries.update(upperData[upperData.length - 1]);
+                        if (lowerData.length) radarLowerSeries.update(lowerData[lowerData.length - 1]);
+                        if (emaData.length) radarEmaSeries.update(emaData[emaData.length - 1]);
+                    }
+                    radarLastBarTime[radarTimeframe] = lastCandle.time;
+                    radarLastBarsCount[radarTimeframe] = sortedBars.length;
+                } catch (err) {
+                    radarCandleSeries.setData(candleData);
+                }
             }
 
             const loadingEl = document.getElementById('radar-chart-loading');
             if (loadingEl) loadingEl.style.display = 'none';
-
-            if (radarTimeframe === 'M1') {
-                const e1 = data.engine_1 || {};
-                const vwapVal = Number(e1.vwap);
-                const upperVal = Number(e1.upper_band);
-                const lowerVal = Number(e1.lower_band);
-                const emaVal = Number(e1.macro_ema50);
-
-                try {
-                    if (radarVwapSeries) {
-                        const vwapData = sortedBars
-                            .filter(b => (b.vwap !== undefined && !isNaN(b.vwap)) || (vwapVal > 0))
-                            .map(b => ({ time: b.time, value: Number(b.vwap !== undefined ? b.vwap : vwapVal) }));
-                        if (vwapData.length) radarVwapSeries.setData(vwapData);
-                    }
-                    if (radarUpperSeries) {
-                        const upperData = sortedBars
-                            .filter(b => (b.upper !== undefined && !isNaN(b.upper)) || (upperVal > 0))
-                            .map(b => ({ time: b.time, value: Number(b.upper !== undefined ? b.upper : upperVal) }));
-                        if (upperData.length) radarUpperSeries.setData(upperData);
-                    }
-                    if (radarLowerSeries) {
-                        const lowerData = sortedBars
-                            .filter(b => (b.lower !== undefined && !isNaN(b.lower)) || (lowerVal > 0))
-                            .map(b => ({ time: b.time, value: Number(b.lower !== undefined ? b.lower : lowerVal) }));
-                        if (lowerData.length) radarLowerSeries.setData(lowerData);
-                    }
-                    if (emaVal > 0 && radarEmaSeries) {
-                        const emaData = sortedBars.map(b => ({ time: b.time, value: emaVal }));
-                        radarEmaSeries.setData(emaData);
-                    }
-                } catch (err) {
-                    console.error("Error setting line series:", err);
-                }
-            } else {
-                try {
-                    if (radarVwapSeries) radarVwapSeries.setData([]);
-                    if (radarUpperSeries) radarUpperSeries.setData([]);
-                    if (radarLowerSeries) radarLowerSeries.setData([]);
-                    if (radarEmaSeries) radarEmaSeries.setData([]);
-                } catch (e) {}
-            }
 
             const elBarStatus = document.getElementById('radar-bar-status');
             if (elBarStatus && sortedBars.length > 0) {

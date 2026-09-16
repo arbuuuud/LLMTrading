@@ -170,7 +170,7 @@ def _build_fallback_radar():
     if bars_m1:
         last = bars_m1[-1]
         delta = target_baseline - last["close"]
-        now_ts = int(now_utc.timestamp())
+        now_ts = (int(now_utc.timestamp()) // 60) * 60
         n = len(bars_m1)
         for idx, b in enumerate(bars_m1):
             b["open"] = round(b["open"] + delta, 2)

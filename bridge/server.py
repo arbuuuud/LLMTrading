@@ -66,6 +66,7 @@ class MultiTimeframeBarAggregator:
         self.history_m15: List[Dict[str, Any]] = []
         self.max_history_m1: int = 500
         self.max_history_m15: int = 120
+        self.baseline_aligned: bool = False
         self._preload_history()
 
     def _preload_history(self):
@@ -177,10 +178,11 @@ class MultiTimeframeBarAggregator:
         current_minute = dt.minute
         mid_price = round((bid + ask) / 2.0, 2)
 
-        # Auto-align historical baseline to live MT5 broker feed price
-        if self.history_m1 and abs(self.history_m1[-1]["close"] - mid_price) > 5.0:
+        # Auto-align historical baseline once on initial tick if not yet aligned
+        if not self.baseline_aligned and self.history_m1 and abs(self.history_m1[-1]["close"] - mid_price) > 5.0:
+            self.baseline_aligned = True
             delta = mid_price - self.history_m1[-1]["close"]
-            now_sec = int(dt.timestamp())
+            now_sec = (int(dt.timestamp()) // 60) * 60
             n_m1 = len(self.history_m1)
             for idx, b in enumerate(self.history_m1):
                 b["open"] = round(b["open"] + delta, 2)
@@ -545,6 +547,7 @@ class LiveBridgeServer:
         symbol = msg.get("symbol", "XAUUSD")
 
         # Ingest bars into aggregator history
+        self.aggregator.baseline_aligned = True
         self.aggregator.ingest_historical_bars(bars, symbol)
 
         # Update scalper VWAP and H1 EMA
