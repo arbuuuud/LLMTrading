@@ -373,6 +373,15 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/radar":
             return self._send_json(get_radar_snapshot_for_dashboard())
 
+        elif path == "/api/force_sync":
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump({"action": "FORCE_SYNC", "timestamp": time.time()}, f)
+                return self._send_json({"status": "ok", "message": "Force sync command dispatched to Python Bridge"})
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
         # 2. Static File Serving (Dashboard, Visualizer, Reports)
         if path in ("/", "/index.html", "/dashboard", "/radar"):
             filepath = REPORTS_DIR / "index.html"
@@ -420,7 +429,16 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
             body = {}
 
         # 1. Login Endpoint
-        if path == "/api/login":
+        if path == "/api/force_sync":
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump({"action": "FORCE_SYNC", "timestamp": time.time()}, f)
+                return self._send_json({"status": "ok", "message": "Force sync command dispatched to Python Bridge"})
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
+        elif path == "/api/login":
             email = body.get("email", "")
             password = body.get("password", "")
             if verify_login(email, password):

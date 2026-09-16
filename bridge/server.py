@@ -67,6 +67,7 @@ class MultiTimeframeBarAggregator:
         self.max_history_m1: int = 500
         self.max_history_m15: int = 120
         self.baseline_aligned: bool = False
+        self.gap_detected: bool = False
         self._preload_history()
 
     def _preload_history(self):
@@ -215,6 +216,10 @@ class MultiTimeframeBarAggregator:
                 if self.history_m1 and self.history_m1[-1]["timestamp"] == completed_m1["timestamp"]:
                     self.history_m1[-1] = dict(completed_m1)
                 else:
+                    if self.history_m1:
+                        gap_sec = (completed_m1["timestamp"] - self.history_m1[-1]["timestamp"]).total_seconds()
+                        if gap_sec > 120:
+                            self.gap_detected = True
                     self.history_m1.append(dict(completed_m1))
                 if len(self.history_m1) > self.max_history_m1:
                     self.history_m1.pop(0)
@@ -413,6 +418,14 @@ class LiveBridgeServer:
         self.server: Optional[asyncio.Server] = None
         self.running = False
 
+        # Data Integrity & Force-Gather Governance
+        self.data_integrity_status: str = "SYNCHRONIZED" if dry_run else "WAITING_SYNC"
+        self.synced_bars_count: int = len(self.aggregator.history_m1)
+        self.min_required_bars: int = 120
+        self.last_sync_time: float = 0.0
+        self.has_real_broker_bars: bool = False
+        self._last_ipc_check: float = 0.0
+
         self.radar_state_path = REPORTS_DIR / "radar_state.json"
         self._last_radar_save = 0.0
 
@@ -482,10 +495,34 @@ class LiveBridgeServer:
             await self.server.wait_closed()
         logger.info("Bridge Server stopped.")
 
+    async def request_force_sync(self, reason: str = "Integrity Check") -> bool:
+        if not self.client_writer:
+            logger.warning(f"[Force Sync] Cannot request sync: MT5 client not connected.")
+            self.data_integrity_status = "WAITING_MT5_CONNECT"
+            self._save_radar_state()
+            return False
+
+        logger.info(f"🔄 [FORCE GATHER] Requesting 360 historical M1 bars from MT5! Reason: {reason}")
+        self.data_integrity_status = "SYNCING"
+        self._save_radar_state()
+
+        try:
+            cmd = json.dumps({"action": "SYNC_BARS", "bars": 360}) + "\n"
+            self.client_writer.write(cmd.encode("utf-8"))
+            await self.client_writer.drain()
+            return True
+        except Exception as e:
+            logger.error(f"[Force Sync] Failed to send SYNC_BARS to MT5: {e}")
+            return False
+
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         client_addr = writer.get_extra_info("peername")
         logger.info(f"[Bridge] MetaTrader 5 Connected from {client_addr}!")
         self.client_writer = writer
+
+        if not self.dry_run:
+            self.data_integrity_status = "SYNCING"
+            await self.request_force_sync(reason="Initial MT5 Handshake Connection")
 
         buffer = ""
         try:
@@ -592,8 +629,12 @@ class LiveBridgeServer:
             self.aggregator.rebuild_m15_history()
             for m15_b in self.aggregator.history_m15[-40:]:
                 self.intraday_strategy.update_zones_only(m15_b)
+            self.has_real_broker_bars = True
+            self.synced_bars_count = len(self.aggregator.history_m1)
+            self.last_sync_time = time.time()
+            self.data_integrity_status = "SYNCHRONIZED"
             self._save_radar_state()
-            logger.info(f"✅ [BAR SYNC COMPLETE] Successfully reconciled {len(self.aggregator.history_m1)} M1 bars & {len(self.aggregator.history_m15)} M15 bars. State fully aligned!")
+            logger.info(f"✅ [DATA INTEGRITY 100%] Successfully reconciled {len(self.aggregator.history_m1)} M1 bars & {len(self.aggregator.history_m15)} M15 bars directly from broker. State fully aligned & trade-ready!")
 
     async def _handle_tick(self, tick: Dict[str, Any]):
         self.latest_tick = tick
@@ -606,6 +647,28 @@ class LiveBridgeServer:
         open_pos = int(tick.get("open_positions", 0))
         acc_id = str(tick.get("account_id", self.active_account_id))
         self.active_account_id = acc_id
+
+        # Check IPC command from dashboard (e.g. force sync button)
+        now_t = time.time()
+        if now_t - self._last_ipc_check >= 0.5:
+            self._last_ipc_check = now_t
+            cmd_file = REPORTS_DIR / "bridge_command.json"
+            if cmd_file.exists():
+                try:
+                    with open(cmd_file, "r") as f:
+                        cmd_data = json.load(f)
+                    cmd_file.unlink(missing_ok=True)
+                    if cmd_data.get("action") == "FORCE_SYNC":
+                        await self.request_force_sync(reason="Dashboard Force-Sync Button")
+                except Exception as e:
+                    logger.debug(f"[Bridge] IPC command check error: {e}")
+
+        # Check gap detected in aggregator
+        if getattr(self.aggregator, "gap_detected", False):
+            self.aggregator.gap_detected = False
+            logger.warning("⚠️ [DATA GAP DETECTED] Missing bars detected in tick stream! Auto-triggering Force Gather...")
+            self.data_integrity_status = "GAP_DETECTED"
+            await self.request_force_sync(reason="Stream Timestamp Gap Detected")
 
         if open_pos == 0:
             self.scalper_adapter.positions.clear()
@@ -660,6 +723,16 @@ class LiveBridgeServer:
         strategy_name: str = "Scalper_M1"
     ):
         if not self.latest_tick or not stop_loss or not take_profit:
+            return
+
+        # Institutional Data Integrity Gate (Interlock)
+        if not self.dry_run and (self.data_integrity_status != "SYNCHRONIZED" or self.synced_bars_count < self.min_required_bars):
+            logger.warning(
+                f"[{strategy_name} VETO] DATA INTEGRITY INTERLOCK ACTIVE! "
+                f"Status: {self.data_integrity_status} | Synced Bars: {self.synced_bars_count}/{self.min_required_bars}. "
+                f"Order blocked to prevent decision on incomplete data."
+            )
+            await self.request_force_sync(reason="Missing Data during Trade Evaluation")
             return
 
         entry_price = self.latest_tick["ask"] if direction == OrderDirection.BUY else self.latest_tick["bid"]
@@ -997,6 +1070,13 @@ class LiveBridgeServer:
                 "dist_demand_pips": dist_demand_pips,
                 "dist_supply_pips": dist_supply_pips,
                 "checklist": e2_checklist
+            },
+            "data_integrity": {
+                "status": self.data_integrity_status,
+                "synced_bars": self.synced_bars_count,
+                "min_required": self.min_required_bars,
+                "is_trade_allowed": bool(self.data_integrity_status == "SYNCHRONIZED" and self.synced_bars_count >= self.min_required_bars),
+                "last_sync": datetime.fromtimestamp(self.last_sync_time, tz=timezone.utc).strftime("%H:%M:%S UTC") if self.last_sync_time else "Never"
             },
             "bars_m1": bars_m1,
             "bars_m15": bars_m15,

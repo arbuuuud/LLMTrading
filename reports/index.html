@@ -797,6 +797,12 @@
                 <div id="radar-bridge-pill" class="badge" style="background:#238636; padding:6px 12px; font-size:0.78rem; display:flex; align-items:center; gap:6px;">
                     <span class="live-beacon">●</span> <span id="radar-bridge-text">Checking Bridge Feed...</span>
                 </div>
+                <div id="radar-integrity-pill" class="badge" style="background:#1f6feb; padding:6px 12px; font-size:0.78rem; display:flex; align-items:center; gap:6px;">
+                    <span id="radar-integrity-icon">🟢</span> <span id="radar-integrity-text">100% Data Integrity</span>
+                </div>
+                <button id="btn-force-sync" class="profile-btn" style="font-size:0.75rem; padding:4px 10px; background:#21262d; border:1px solid #30363d; border-radius:6px; cursor:pointer; color:#58a6ff;" onclick="triggerForceSync()" title="Force gather 360 M1 historical bars directly from broker to ensure zero gap">
+                    🔄 Force Re-Sync
+                </button>
                 <div id="radar-window-pill" class="badge badge-cyan" style="padding:6px 12px; font-size:0.78rem;">
                     ⏳ Golden Window: Checking...
                 </div>
@@ -2890,6 +2896,26 @@
             }
         }
 
+        async function triggerForceSync() {
+            const btn = document.getElementById('btn-force-sync');
+            if (btn) {
+                btn.innerText = '⏳ Syncing...';
+                btn.disabled = true;
+            }
+            try {
+                await fetch('/api/force_sync', { method: 'POST' });
+                setTimeout(fetchRadarData, 600);
+            } catch (e) {
+                console.error("Force sync error:", e);
+            }
+            setTimeout(() => {
+                if (btn) {
+                    btn.innerText = '🔄 Force Re-Sync';
+                    btn.disabled = false;
+                }
+            }, 2500);
+        }
+
         function updateRadarUI(data) {
             if (!data) return;
 
@@ -2915,6 +2941,28 @@
                 } else {
                     elBridgePill.style.background = '#9e6a03';
                     elBridgeText.innerText = 'Bridge Standby / Parquet Replay';
+                }
+            }
+
+            // Data Integrity Pill
+            const integrity = data.data_integrity || {};
+            const elIntegPill = document.getElementById('radar-integrity-pill');
+            const elIntegText = document.getElementById('radar-integrity-text');
+            const elIntegIcon = document.getElementById('radar-integrity-icon');
+            if (elIntegPill && elIntegText) {
+                const st = integrity.status || 'SYNCHRONIZED';
+                if (st === 'SYNCHRONIZED') {
+                    elIntegPill.style.background = '#1f6feb';
+                    if (elIntegIcon) elIntegIcon.innerText = '🟢';
+                    elIntegText.innerText = `100% Data Integrity (${integrity.synced_bars || 360} Bars)`;
+                } else if (st === 'SYNCING') {
+                    elIntegPill.style.background = '#9e6a03';
+                    if (elIntegIcon) elIntegIcon.innerText = '🟡';
+                    elIntegText.innerText = 'Syncing Broker Bars... (Trade Paused)';
+                } else {
+                    elIntegPill.style.background = '#da3633';
+                    if (elIntegIcon) elIntegIcon.innerText = '🔴';
+                    elIntegText.innerText = `Data Gap / Syncing Needed (${integrity.synced_bars || 0} Bars)`;
                 }
             }
 

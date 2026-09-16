@@ -85,8 +85,14 @@ class TestLiveBridge(unittest.TestCase):
                 magic=1001
             )
 
-            order_line = await reader.readline()
-            order_data = json.loads(order_line.decode("utf-8"))
+            # Read line from server (handles SYNC_BARS if sent on connect)
+            line1 = await reader.readline()
+            data1 = json.loads(line1.decode("utf-8"))
+            if data1.get("action") == "SYNC_BARS":
+                line1 = await reader.readline()
+                data1 = json.loads(line1.decode("utf-8"))
+
+            order_data = data1
             self.assertEqual(order_data["action"], "ORDER")
             self.assertEqual(order_data["magic"], 1001)
             self.assertEqual(order_data["lots"], 0.10)
