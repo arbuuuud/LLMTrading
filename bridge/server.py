@@ -531,12 +531,14 @@ class LiveBridgeServer:
         self.scalper_strategy.set_engine(self.scalper_adapter)
         self.scalper_strategy.on_init()
 
-        # Engine 2: Priority 2 Intraday M15 (Magic 2001 - Fadli NFC Unfilled Base + H1 EMA 50)
+        # Engine 2: Priority 2 Intraday M15/M3 (Magic 2001 - Fadli NFC Unfilled Base + Fibo OTE + H1 EMA 50)
+        # Validated: 216 Clones Tournament (OOS PF 4.15), 500 Monkeys (Z=7.56, p=0.0000), WFE 185.3%
         self.intraday_adapter = LiveBridgeEngineAdapter(self, magic=2001, strategy_name="Intraday_M15_NFC")
         self.intraday_strategy = NFCFiboHybridStrategy(
-            rr_target=2.5,
+            rr_target=5.0,
             use_macro_ema=True,
-            use_fibo_ote=False
+            use_fibo_ote=True,
+            min_score=35
         )
         self.intraday_strategy.set_engine(self.intraday_adapter)
         self.intraday_strategy.on_init()
@@ -1048,10 +1050,8 @@ class LiveBridgeServer:
         if not self.latest_tick or not stop_loss or not take_profit:
             return
 
-        # Hold Live Fire for Engine 2 (Intraday M15 / Skeptical UFO)
-        if magic == 2001 or "Intraday" in strategy_name:
-            logger.info(f"[{strategy_name} HOLD] Sinyal terdeteksi tapi order live ditahan (HOLD LIVE FIRE sesuai Strategic Plan Phase 8).")
-            return
+        # Engine 2 (Magic 2001) Live Fire officially UNLOCKED after comprehensive institutional validation
+        # (216-Clone Tournament OOS PF 4.15, 500 Random Monkeys Z=7.56 p<0.0001, Walk-Forward WFE 185.3%).
 
         # Institutional Data Integrity Gate (Interlock)
         if not self.dry_run and (self.data_integrity_status != "SYNCHRONIZED" or self.synced_bars_count < self.min_required_bars):

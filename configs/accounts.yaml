@@ -71,6 +71,6 @@ accounts:
     equity: 10000.0
     currency: USD
     notes: Main testing account on Wine macOS
-    last_seen: '2026-09-17 21:36:02'
+    last_seen: '2026-09-17 22:05:41'
     updated_at: '2026-09-16 09:01:40'
 default_profile: sweet_spot

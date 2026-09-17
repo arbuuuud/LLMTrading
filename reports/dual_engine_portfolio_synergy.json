@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-09-17 22:04:34",
+  "engine_1": {
+    "name": "M3_H4_EMA50_RR_2_0_ATR_1_0_TICK_TOUCH_RATCHET",
+    "trades": 499,
+    "profit_factor": 1.17,
+    "oos_pf": 1.65,
+    "net_pnl": 2676.51
+  },
+  "engine_2": {
+    "name": "H1_EMA50_STRICT_FIBO_OTE_LTF_M3_WICK_CONFIRM_RR_5_0",
+    "trades": 237,
+    "profit_factor": 1.75,
+    "oos_profit_factor": 4.15,
+    "net_pnl": 7679.08
+  },
+  "portfolio": {
+    "total_trades": 736,
+    "total_net_pnl": 10355.59,
+    "total_roi_pct": 103.6
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-09-17 22:03:28",
+  "champion": {
+    "clone_id": "CHAMPION_A2",
+    "name": "H1_EMA50_STRICT_FIBO_OTE_LTF_M3_WICK_CONFIRM_RR_5_0",
+    "total_trades": 237,
+    "win_rate": 25.3,
+    "profit_factor": 1.75,
+    "oos_profit_factor": 4.15,
+    "oos_trades": 44,
+    "net_pnl": 7679.08,
+    "max_dd": 7.35,
+    "avg_sl": 1.39,
+    "pass_filter": true
+  },
+  "inverted": {
+    "clone_id": "CHAMPION_A2",
+    "name": "H1_EMA50_STRICT_FIBO_OTE_LTF_M3_WICK_CONFIRM_RR_5_0",
+    "total_trades": 307,
+    "win_rate": 14.3,
+    "profit_factor": 0.81,
+    "oos_profit_factor": 0.77,
+    "oos_trades": 59,
+    "net_pnl": -2146.17,
+    "max_dd": 26.28,
+    "avg_sl": 1.56,
+    "pass_filter": false
+  },
+  "random_monkeys": {
+    "count": 500,
+    "mean_pf": 0.96,
+    "std_pf": 0.1,
+    "mean_pnl": -456.18,
+    "z_score": 7.56,
+    "p_value": 1.965259671189379e-14,
+    "passed": true
+  }
+}
