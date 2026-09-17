@@ -189,6 +189,8 @@ void DisconnectServer()
 //+------------------------------------------------------------------+
 //| Send String Data over Socket                                     |
 //+------------------------------------------------------------------+
+int m_consecutive_send_fails = 0;
+
 bool SendString(string data)
 {
    if(!m_connected || m_socket == INVALID_HANDLE)
@@ -199,18 +201,24 @@ bool SendString(string data)
    if(len <= 0)
       return false;
 
-   int sent = 0;
-   int attempts = 0;
-   while(attempts < 3)
+   int sent = SocketSend(m_socket, buffer, len);
+   if(sent == len)
    {
-      sent = SocketSend(m_socket, buffer, len);
-      if(sent == len)
-         return true;
-      attempts++;
-      Sleep(30);
+      m_consecutive_send_fails = 0;
+      return true;
    }
 
-   PrintFormat("[LLM Bridge] SocketSend failed after 3 attempts. Sent %d of %d bytes. Error: %d", sent, len, GetLastError());
+   int err = GetLastError();
+   m_consecutive_send_fails++;
+
+   // If temporary timeout (5273) on high frequency tick, don't tear down socket
+   if(err == 5273 && m_consecutive_send_fails < 10)
+   {
+      return false; // Skip this individual tick cleanly
+   }
+
+   PrintFormat("[LLM Bridge] SocketSend connection lost after %d failures. Sent %d of %d bytes. Error: %d", m_consecutive_send_fails, sent, len, err);
+   m_consecutive_send_fails = 0;
    DisconnectServer();
    return false;
 }

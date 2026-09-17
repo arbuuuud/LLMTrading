@@ -578,7 +578,6 @@ class LiveBridgeServer:
 
         if not self.dry_run:
             self.data_integrity_status = "SYNCING"
-            await self.request_force_sync(reason="Initial MT5 Handshake Connection")
 
         buffer = ""
         try:
@@ -617,12 +616,6 @@ class LiveBridgeServer:
             logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({msg.get('company')}) registered! Balance: ${msg.get('balance')} | Equity: ${msg.get('equity')}")
             # Ensure governor is loaded for this account
             self.get_governor_for_account(acc_id)
-            if self.client_writer:
-                try:
-                    self.client_writer.write((json.dumps({"action": "SYNC_BARS"}) + "\n").encode("utf-8"))
-                    await self.client_writer.drain()
-                except Exception as e:
-                    logger.debug(f"[Bridge] Error sending SYNC_BARS: {e}")
             self._save_radar_state()
 
         elif msg_type == "BAR_SYNC":
