@@ -62,14 +62,19 @@ class MultiTimeframeBarAggregator:
         self.current_m2_bucket: Optional[datetime] = None
         self.current_m2_bar: Optional[Dict[str, Any]] = None
 
+        self.current_m3_bucket: Optional[datetime] = None
+        self.current_m3_bar: Optional[Dict[str, Any]] = None
+
         self.current_m15_bucket: Optional[datetime] = None
         self.current_m15_bar: Optional[Dict[str, Any]] = None
 
         self.history_m1: List[Dict[str, Any]] = []
         self.history_m2: List[Dict[str, Any]] = []
+        self.history_m3: List[Dict[str, Any]] = []
         self.history_m15: List[Dict[str, Any]] = []
         self.max_history_m1: int = 500
         self.max_history_m2: int = 250
+        self.max_history_m3: int = 180
         self.max_history_m15: int = 120
         self.baseline_aligned: bool = False
         self.gap_detected: bool = False
@@ -168,6 +173,36 @@ class MultiTimeframeBarAggregator:
         sorted_m2 = sorted(m2_dict.keys())
         self.history_m2 = [m2_dict[k] for k in sorted_m2[-self.max_history_m2:]]
 
+    def rebuild_m3_history(self):
+        """
+        Reconstructs M3 bars from current history_m1 bars after historical catch-up sync.
+        """
+        m3_dict = {}
+        for m1 in self.history_m1:
+            dt = m1["timestamp"]
+            m3_min = (dt.minute // 3) * 3
+            bucket = dt.replace(minute=m3_min, second=0, microsecond=0)
+            bucket_sec = int(bucket.timestamp())
+            if bucket_sec not in m3_dict:
+                m3_dict[bucket_sec] = {
+                    "symbol": m1["symbol"],
+                    "timestamp": bucket,
+                    "open": m1["open"],
+                    "high": m1["high"],
+                    "low": m1["low"],
+                    "close": m1["close"],
+                    "mean_spread": m1["mean_spread"],
+                    "tick_volume": m1["tick_volume"]
+                }
+            else:
+                m3_dict[bucket_sec]["high"] = max(m3_dict[bucket_sec]["high"], m1["high"])
+                m3_dict[bucket_sec]["low"] = min(m3_dict[bucket_sec]["low"], m1["low"])
+                m3_dict[bucket_sec]["close"] = m1["close"]
+                m3_dict[bucket_sec]["tick_volume"] += m1["tick_volume"]
+
+        sorted_m3 = sorted(m3_dict.keys())
+        self.history_m3 = [m3_dict[k] for k in sorted_m3[-self.max_history_m3:]]
+
     def rebuild_m15_history(self):
         """
         Reconstructs M15 bars from current history_m1 bars after historical catch-up sync.
@@ -205,10 +240,10 @@ class MultiTimeframeBarAggregator:
         ask: float,
         spread: float,
         timestamp_ms: int
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
         Processes an incoming tick.
-        Returns (completed_m1_bar, completed_m2_bar, completed_m15_bar).
+        Returns (completed_m1_bar, completed_m2_bar, completed_m3_bar, completed_m15_bar).
         """
         dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
         current_minute = dt.minute
@@ -240,6 +275,7 @@ class MultiTimeframeBarAggregator:
 
         completed_m1: Optional[Dict[str, Any]] = None
         completed_m2: Optional[Dict[str, Any]] = None
+        completed_m3: Optional[Dict[str, Any]] = None
         completed_m15: Optional[Dict[str, Any]] = None
 
         # 1. Check M1 Rollover
@@ -284,7 +320,7 @@ class MultiTimeframeBarAggregator:
             self.current_m1_bar["close"] = mid_price
             self.current_m1_bar["tick_volume"] += 1
 
-        # 2. If an M1 bar completed, aggregate into M2 and M15 bars
+        # 2. If an M1 bar completed, aggregate into M2, M3, and M15 bars
         if completed_m1 is not None:
             m1_dt: datetime = completed_m1["timestamp"]
 
@@ -320,12 +356,43 @@ class MultiTimeframeBarAggregator:
                 self.current_m2_bar["close"] = completed_m1["close"]
                 self.current_m2_bar["tick_volume"] += completed_m1["tick_volume"]
 
+            # Aggregate into M3 (Champion Timeframe)
+            m3_min = (m1_dt.minute // 3) * 3
+            m3_bucket_time = m1_dt.replace(minute=m3_min, second=0, microsecond=0)
+            if self.current_m3_bucket is not None and m3_bucket_time != self.current_m3_bucket:
+                if self.current_m3_bar is not None:
+                    completed_m3 = dict(self.current_m3_bar)
+                    if self.history_m3 and self.history_m3[-1]["timestamp"] == completed_m3["timestamp"]:
+                        self.history_m3[-1] = dict(completed_m3)
+                    else:
+                        self.history_m3.append(dict(completed_m3))
+                    if len(self.history_m3) > self.max_history_m3:
+                        self.history_m3.pop(0)
+                self.current_m3_bar = None
+
+            self.current_m3_bucket = m3_bucket_time
+            if self.current_m3_bar is None:
+                self.current_m3_bar = {
+                    "symbol": symbol,
+                    "timestamp": m3_bucket_time,
+                    "open": completed_m1["open"],
+                    "high": completed_m1["high"],
+                    "low": completed_m1["low"],
+                    "close": completed_m1["close"],
+                    "mean_spread": completed_m1["mean_spread"],
+                    "tick_volume": completed_m1["tick_volume"]
+                }
+            else:
+                self.current_m3_bar["high"] = max(self.current_m3_bar["high"], completed_m1["high"])
+                self.current_m3_bar["low"] = min(self.current_m3_bar["low"], completed_m1["low"])
+                self.current_m3_bar["close"] = completed_m1["close"]
+                self.current_m3_bar["tick_volume"] += completed_m1["tick_volume"]
+
             # Aggregate into M15
             m15_min = (m1_dt.minute // 15) * 15
             bucket_time = m1_dt.replace(minute=m15_min, second=0, microsecond=0)
 
             if self.current_m15_bucket is not None and bucket_time != self.current_m15_bucket:
-                # Finalize previous M15 bar
                 if self.current_m15_bar is not None:
                     completed_m15 = dict(self.current_m15_bar)
                     if self.history_m15 and self.history_m15[-1]["timestamp"] == completed_m15["timestamp"]:
@@ -337,7 +404,6 @@ class MultiTimeframeBarAggregator:
                 self.current_m15_bar = None
 
             self.current_m15_bucket = bucket_time
-
             if self.current_m15_bar is None:
                 self.current_m15_bar = {
                     "symbol": symbol,
@@ -355,7 +421,7 @@ class MultiTimeframeBarAggregator:
                 self.current_m15_bar["close"] = completed_m1["close"]
                 self.current_m15_bar["tick_volume"] += completed_m1["tick_volume"]
 
-        return completed_m1, completed_m2, completed_m15
+        return completed_m1, completed_m2, completed_m3, completed_m15
 
 
 class LiveBridgeEngineAdapter:
@@ -448,15 +514,15 @@ class LiveBridgeServer:
 
         self.orchestrator = MultiAgentOrchestrator()
 
-        # Engine 1: Priority 1 Scalper M2 (Magic 1001 - Anti-Noise Sweet Spot)
-        self.scalper_adapter = LiveBridgeEngineAdapter(self, magic=1001, strategy_name="Scalper_M2_VWAP")
+        # Engine 1: Priority 1 Scalper M3 (Magic 1001 - Golden Champion Sweet Spot)
+        self.scalper_adapter = LiveBridgeEngineAdapter(self, magic=1001, strategy_name="Scalper_M3_VWAP")
         self.scalper_strategy = SessionAnchoredVWAPStrategy(
             band_multiplier=1.8,
             sl_buffer_dollars=0.50,
             risk_reward_ratio=2.0,
             base_risk_pct=0.5,
             greed_risk_pct=0.25,
-            max_bars_hold=30,  # 30 M2 bars = 60 minutes
+            max_bars_hold=30,  # 30 M3 bars = 90 minutes
             start_hour=10,
             start_minute=30,
             end_hour=14,
@@ -861,8 +927,9 @@ class LiveBridgeServer:
                 }
                 self.scalper_strategy.update_indicators_only(bar_dict)
 
-            # Reconstruct M2 and M15 history and update NFC zones
+            # Reconstruct M2, M3, and M15 history and update NFC zones
             self.aggregator.rebuild_m2_history()
+            self.aggregator.rebuild_m3_history()
             self.aggregator.rebuild_m15_history()
             for m15_b in self.aggregator.history_m15[-40:]:
                 self.intraday_strategy.update_zones_only(m15_b)
@@ -914,22 +981,22 @@ class LiveBridgeServer:
         gov = self.get_governor_for_account(acc_id)
 
         # Feed to Multi-Timeframe aggregator
-        completed_m1, completed_m2, completed_m15 = self.aggregator.process_tick(symbol, bid, ask, spread, time_ms)
+        completed_m1, completed_m2, completed_m3, completed_m15 = self.aggregator.process_tick(symbol, bid, ask, spread, time_ms)
 
         # 1. On M1 Bar Close -> Updates Radar state & Orchestrator
         if completed_m1 is not None:
             await self._on_m1_bar_close(completed_m1, equity, open_pos)
 
-        # 2. On M2 Bar Close -> Triggers Scalper Strategy (Anti-Noise Sweet Spot)
-        if completed_m2 is not None:
-            await self._on_m2_bar_close(completed_m2, equity, open_pos)
+        # 2. On M3 Bar Close -> Triggers Scalper Strategy (Golden Champion Sweet Spot)
+        if completed_m3 is not None:
+            await self._on_m3_bar_close(completed_m3, equity, open_pos)
 
         # 3. On M15 Bar Close -> Evaluates Intraday SMC/NFC Zones
         if completed_m15 is not None:
             await self._on_m15_bar_close(completed_m15, equity, open_pos)
 
         # 4. Periodically persist Radar Snapshot for Dashboard HUD (max 2/sec or on bar close)
-        if (time.time() - self._last_radar_save >= 0.5) or (completed_m1 is not None) or (completed_m2 is not None) or (completed_m15 is not None):
+        if (time.time() - self._last_radar_save >= 0.5) or (completed_m1 is not None) or (completed_m3 is not None) or (completed_m15 is not None):
             self._save_radar_state()
 
     async def _on_m1_bar_close(self, bar: Dict[str, Any], account_equity: float, open_positions: int):
@@ -951,11 +1018,11 @@ class LiveBridgeServer:
                 this_acc_equity = account_equity
             gov.on_new_bar(bar["timestamp"], this_acc_equity)
 
-    async def _on_m2_bar_close(self, bar: Dict[str, Any], account_equity: float, open_positions: int):
+    async def _on_m3_bar_close(self, bar: Dict[str, Any], account_equity: float, open_positions: int):
         logger.info(
-            f"[M2 Bar Close] {bar['timestamp'].strftime('%H:%M')} | "
+            f"[M3 Bar Close] {bar['timestamp'].strftime('%H:%M')} | "
             f"O: {bar['open']:.2f} H: {bar['high']:.2f} L: {bar['low']:.2f} C: {bar['close']:.2f} | "
-            f"Spread: ${bar['mean_spread']:.2f} (Evaluating M2 Scalper...)"
+            f"Spread: ${bar['mean_spread']:.2f} (Evaluating Champion M3 Scalper...)"
         )
         self.scalper_strategy.on_bar(bar)
 
