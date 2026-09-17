@@ -30,6 +30,8 @@ int            m_socket          = INVALID_HANDLE;
 bool           m_connected       = false;
 ulong          m_last_connect_ms = 0;
 datetime       m_last_heartbeat  = 0;
+ulong          m_last_timer_ms   = 0;
+string         m_incoming_buffer = "";
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -208,23 +210,38 @@ bool SendString(string data)
 //+------------------------------------------------------------------+
 //| Read Incoming Data from Python Brain                             |
 //+------------------------------------------------------------------+
-string ReadIncoming()
+void PollIncomingCommands()
 {
    if(!m_connected || m_socket == INVALID_HANDLE)
-      return "";
+      return;
 
    uint readable = SocketIsReadable(m_socket);
-   if(readable <= 0)
-      return "";
-
-   uchar buffer[];
-   ArrayResize(buffer, readable + 32);
-   int received = SocketRead(m_socket, buffer, readable, InpTimeoutMs);
-   if(received > 0)
+   if(readable > 0)
    {
-      return CharArrayToString(buffer, 0, received, CP_UTF8);
+      uchar buffer[];
+      ArrayResize(buffer, readable + 32);
+      int received = SocketRead(m_socket, buffer, readable, InpTimeoutMs);
+      if(received > 0)
+      {
+         string chunk = CharArrayToString(buffer, 0, received, CP_UTF8);
+         m_incoming_buffer += chunk;
+      }
    }
-   return "";
+
+   // Process complete newline-delimited JSON commands from stream buffer
+   while(StringFind(m_incoming_buffer, "\n") >= 0)
+   {
+      int newlinePos = StringFind(m_incoming_buffer, "\n");
+      string line = StringSubstr(m_incoming_buffer, 0, newlinePos);
+      m_incoming_buffer = StringSubstr(m_incoming_buffer, newlinePos + 1);
+      
+      StringTrimLeft(line);
+      StringTrimRight(line);
+      if(line != "")
+      {
+         ProcessCommand(line);
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -370,19 +387,27 @@ void OnTick()
    SendString(tickJson);
 
    // Check if Python sent back commands
-   string response = ReadIncoming();
-   if(response != "")
-   {
-      ProcessCommand(response);
-   }
+   PollIncomingCommands();
 }
 
 //+------------------------------------------------------------------+
-//| Timer function (Heartbeat & Reconnect)                           |
+//| Timer function (Heartbeat, Reconnect & Sleep-Wake Auto-Sync)     |
 //+------------------------------------------------------------------+
 void OnTimer()
 {
    ulong now_ms = GetTickCount64();
+
+   // 1. Detect Laptop Sleep / Resume or Timer Stalls (> 4 seconds elapsed on a 1-second timer)
+   if(m_last_timer_ms > 0 && (now_ms - m_last_timer_ms > 4000))
+   {
+      PrintFormat("[LLM Bridge] Laptop Sleep/Wake detected (Elapsed: %I64d ms). Refreshing connection and historical bars...", now_ms - m_last_timer_ms);
+      DisconnectServer();
+      ConnectToServer();
+      m_last_timer_ms = now_ms;
+      return;
+   }
+   m_last_timer_ms = now_ms;
+
    if(!m_connected)
    {
       if(now_ms - m_last_connect_ms >= 3000)
@@ -394,11 +419,7 @@ void OnTimer()
    else
    {
       // Check for incoming commands during quiet periods
-      string response = ReadIncoming();
-      if(response != "")
-      {
-         ProcessCommand(response);
-      }
+      PollIncomingCommands();
    }
 }
 //+------------------------------------------------------------------+

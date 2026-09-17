@@ -220,6 +220,7 @@ class MultiTimeframeBarAggregator:
                         gap_sec = (completed_m1["timestamp"] - self.history_m1[-1]["timestamp"]).total_seconds()
                         if gap_sec > 180 and not self.gap_detected:
                             self.gap_detected = True
+                            logger.warning(f"[Aggregator] M1 timeline gap of {gap_sec:.0f}s detected between {self.history_m1[-1]['timestamp']} and {completed_m1['timestamp']}")
                     self.history_m1.append(dict(completed_m1))
                 if len(self.history_m1) > self.max_history_m1:
                     self.history_m1.pop(0)
