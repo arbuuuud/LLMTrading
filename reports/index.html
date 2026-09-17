@@ -3184,29 +3184,48 @@
             }
             if (!cleanCandles.length) return;
 
+            // Extract indicator line values
             const e1 = data.engine_1 || {};
-            const vwapVal = Number(e1.vwap);
             const upperVal = Number(e1.upper_band);
             const lowerVal = Number(e1.lower_band);
             const emaVal = Number(e1.macro_ema50);
 
-            const vwapData = cleanCandles.map(c => {
+            // Inherit VWAP & Bands from pre-computed bar points to prevent live forming bar jumping
+            const vwapData = [];
+            cleanCandles.forEach((c, idx) => {
                 const src = map.get(c.time);
-                const val = (src && src.vwap !== undefined && !isNaN(src.vwap)) ? Number(src.vwap) : vwapVal;
-                return { time: c.time, value: val };
-            }).filter(d => d.value > 0);
+                let val = (src && src.vwap !== undefined && !isNaN(src.vwap)) ? Number(src.vwap) : null;
+                if (val === null && idx > 0 && vwapData[idx - 1]) {
+                    val = vwapData[idx - 1].value;
+                } else if (val === null) {
+                    val = Number(e1.vwap);
+                }
+                if (val > 0) vwapData.push({ time: c.time, value: val });
+            });
 
-            const upperData = cleanCandles.map(c => {
+            const upperData = [];
+            cleanCandles.forEach((c, idx) => {
                 const src = map.get(c.time);
-                const val = (src && src.upper !== undefined && !isNaN(src.upper)) ? Number(src.upper) : upperVal;
-                return { time: c.time, value: val };
-            }).filter(d => d.value > 0);
+                let val = (src && src.upper !== undefined && !isNaN(src.upper)) ? Number(src.upper) : null;
+                if (val === null && idx > 0 && upperData[idx - 1]) {
+                    val = upperData[idx - 1].value;
+                } else if (val === null) {
+                    val = upperVal;
+                }
+                if (val > 0) upperData.push({ time: c.time, value: val });
+            });
 
-            const lowerData = cleanCandles.map(c => {
+            const lowerData = [];
+            cleanCandles.forEach((c, idx) => {
                 const src = map.get(c.time);
-                const val = (src && src.lower !== undefined && !isNaN(src.lower)) ? Number(src.lower) : lowerVal;
-                return { time: c.time, value: val };
-            }).filter(d => d.value > 0);
+                let val = (src && src.lower !== undefined && !isNaN(src.lower)) ? Number(src.lower) : null;
+                if (val === null && idx > 0 && lowerData[idx - 1]) {
+                    val = lowerData[idx - 1].value;
+                } else if (val === null) {
+                    val = lowerVal;
+                }
+                if (val > 0) lowerData.push({ time: c.time, value: val });
+            });
 
             const emaData = (emaVal > 0) ? cleanCandles.map(c => ({ time: c.time, value: emaVal })) : [];
 

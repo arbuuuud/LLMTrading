@@ -852,20 +852,31 @@ class LiveBridgeServer:
         curr_hour = now_utc.hour
         curr_min = now_utc.minute
 
-        # Prepare bars_m1 and bars_m15
+        # Prepare bars_m1 and bars_m15 with Day-Anchored VWAP accumulation
         bars_m1 = []
-        cum_vol = 0.0
-        cum_pv = 0.0
-        cum_p2v = 0.0
-
         bar_dict = {}
         for b in self.aggregator.history_m1:
             ts = int(b["timestamp"].timestamp())
             bar_dict[ts] = b
 
         sorted_ts = sorted(bar_dict.keys())
-        for ts in sorted_ts[-120:]:
+        
+        # Accumulate session VWAP across full available history, anchored by date
+        cum_vol = 0.0
+        cum_pv = 0.0
+        cum_p2v = 0.0
+        cur_date_str = None
+        
+        full_m1_annotated = []
+        for ts in sorted_ts:
             b = bar_dict[ts]
+            d_str = b["timestamp"].strftime("%Y-%m-%d")
+            if cur_date_str != d_str:
+                cur_date_str = d_str
+                cum_vol = 0.0
+                cum_pv = 0.0
+                cum_p2v = 0.0
+
             o = round(b["open"], 2)
             h = round(b["high"], 2)
             l = round(b["low"], 2)
@@ -877,7 +888,7 @@ class LiveBridgeServer:
             cum_p2v += (tp ** 2) * vol
             v = cum_pv / cum_vol
             s = math.sqrt(max(0.0, (cum_p2v / cum_vol) - (v ** 2)))
-            bars_m1.append({
+            full_m1_annotated.append({
                 "time": ts,
                 "open": o,
                 "high": h,
@@ -888,6 +899,8 @@ class LiveBridgeServer:
                 "upper": round(v + 1.8 * s, 2),
                 "lower": round(v - 1.8 * s, 2)
             })
+
+        bars_m1 = full_m1_annotated[-120:]
 
         bars_m15 = []
         for b in self.aggregator.history_m15[-60:]:
