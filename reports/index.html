@@ -500,8 +500,98 @@
             from { transform: translateY(20px); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
         }
+        @keyframes pulseGlow {
+            0% { opacity: 0.4; transform: scale(0.9); }
+            50% { opacity: 1.0; transform: scale(1.1); }
+            100% { opacity: 0.4; transform: scale(0.9); }
+        }
+        .live-beacon {
+            animation: pulseGlow 1.5s infinite ease-in-out;
+            display: inline-block;
+            color: #3fb950;
+        }
+        .radar-check-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.78rem;
+            gap: 8px;
+        }
+        .radar-check-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .dot-ok { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.6); }
+        .dot-wait { background: #d29922; box-shadow: 0 0 6px rgba(210,153,34,0.6); }
+        .dot-fail { background: #8b949e; }
 
+        /* Tactical Radar State Machine Tooltips & Pipeline Info */
+        .state-tooltip-container {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .state-tooltip-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 8px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.06);
+            border-radius: 8px;
+            padding: 12px 14px;
+            width: 350px;
+            z-index: 99999;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-4px);
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            text-align: left;
+        }
+        .state-tooltip-container:hover .state-tooltip-dropdown {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .state-step-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            border: 1px solid transparent;
+            font-size: 0.75rem;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .state-step-item.active {
+            background: rgba(31, 111, 235, 0.18) !important;
+            border: 1px solid #1f6feb !important;
+            border-left: 3px solid #58a6ff !important;
+        }
+        .state-step-badge {
+            font-size: 0.68rem;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, monospace;
+            flex-shrink: 0;
+            min-width: 82px;
+            text-align: center;
+        }
     </style>
+    <!-- TradingView Lightweight Charts Library for Real-Time Institutional Charting -->
+    <script src="/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -543,6 +633,9 @@
             <div class="nav-tabs">
                 <button id="nav-btn-accounts" class="nav-tab-btn active" onclick="switchMainTab('ACCOUNTS')">
                     👥 Account & Risk Manager
+                </button>
+                <button id="nav-btn-radar" class="nav-tab-btn" onclick="switchMainTab('RADAR')">
+                    🎯 Tactical Radar & HUD <span style="font-size:0.7rem; background:rgba(63,185,80,0.2); color:#3fb950; border:1px solid rgba(63,185,80,0.4); padding:1px 6px; border-radius:10px; margin-left:4px;"><span class="live-beacon">●</span> LIVE</span>
                 </button>
                 <button id="nav-btn-portfolios" class="nav-tab-btn" onclick="switchMainTab('PORTFOLIOS')">
                     💼 4 Portfolio Profiles
@@ -635,6 +728,98 @@
             </div>
         </div>
 
+        <!-- ============================================================= -->
+        <!-- MT5 DIRECT ORDER EXECUTION & SIMULATION TEST PAD              -->
+        <!-- ============================================================= -->
+        <div class="table-box" style="margin:0 0 24px 0; border: 1px solid #1f6feb; box-shadow: 0 4px 24px rgba(31, 111, 235, 0.18);">
+            <div class="table-header" style="background: linear-gradient(90deg, #161b22 0%, #0d1117 100%); border-bottom: 1px solid #30363d; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <span style="color:#58a6ff; font-weight:700; font-size:1.0rem;">🕹️ MetaTrader 5 Direct Order Execution & Simulation Pad</span>
+                    <span style="font-size:0.75rem; color:#8b949e; margin-left:10px;">Simulasi Firing Sinyal Real-time dari Python Brain $\rightarrow$ MT5 (TCP:5555)</span>
+                </div>
+                <div id="test-pad-status" style="font-size:0.75rem; padding:4px 10px; border-radius:4px; background:#21262d; border:1px solid #30363d;">
+                    Bridge: <span id="test-pad-conn" style="color:#3fb950; font-weight:bold;">🟢 Ready</span>
+                </div>
+            </div>
+            
+            <div style="padding: 20px; background: #0d1117;">
+                <!-- Parameters Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px; margin-bottom: 16px;">
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">SYMBOL</label>
+                        <input type="text" id="test-order-symbol" class="form-input" value="XAUUSD" style="width:100%; font-weight:bold; color:#f0f6fc; text-transform:uppercase;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">LOT SIZE</label>
+                        <input type="number" id="test-order-lots" class="form-input" value="0.01" step="0.01" min="0.01" max="50.0" style="width:100%; font-weight:bold; color:#58a6ff;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">LIMIT PRICE (FOR PENDING)</label>
+                        <input type="number" id="test-order-price" class="form-input" placeholder="Kosong = Market" step="0.01" style="width:100%; font-weight:bold; color:#e3b341;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">STOP LOSS (SL)</label>
+                        <input type="number" id="test-order-sl" class="form-input" placeholder="0.00 (Opsional)" step="0.01" style="width:100%; font-weight:bold; color:#f85149;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">TAKE PROFIT (TP)</label>
+                        <input type="number" id="test-order-tp" class="form-input" placeholder="0.00 (Opsional)" step="0.01" style="width:100%; font-weight:bold; color:#3fb950;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">MAGIC NUMBER</label>
+                        <select id="test-order-magic" class="form-input" style="width:100%;">
+                            <option value="9999" selected>9999 (Manual Test)</option>
+                            <option value="1001">1001 (Scalper M1 Engine)</option>
+                            <option value="2001">2001 (Intraday M15 Engine)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Live Price Reference & Quick Limit Buttons -->
+                <div style="display:flex; justify-content:space-between; align-items:center; background:#161b22; padding:10px 14px; border-radius:6px; margin-bottom:16px; border:1px solid #30363d; flex-wrap:wrap; gap:10px;">
+                    <div style="font-size:0.8rem; color:#c9d1d9; display:flex; gap:16px; align-items:center;">
+                        <span>📊 Harga Live MT5: <strong id="pad-live-bid" style="color:#f85149;">Bid: --</strong> | <strong id="pad-live-ask" style="color:#3fb950;">Ask: --</strong></span>
+                        <span>Spread: <strong id="pad-live-spread" style="color:#e3b341;">--</strong></span>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <button type="button" class="btn-submit" style="padding:4px 10px; font-size:0.75rem; background:#21262d; border:1px solid #30363d; color:#58a6ff; cursor:pointer;" onclick="fillLimitPrice('BID_MINUS')">
+                            📉 Set Limit (-$2.00 di Bawah Bid)
+                        </button>
+                        <button type="button" class="btn-submit" style="padding:4px 10px; font-size:0.75rem; background:#21262d; border:1px solid #30363d; color:#d2a8ff; cursor:pointer;" onclick="fillLimitPrice('ASK_PLUS')">
+                            📈 Set Limit (+$2.00 di Atas Ask)
+                        </button>
+                        <button type="button" class="btn-submit" style="padding:4px 10px; font-size:0.75rem; background:#21262d; border:1px solid #30363d; color:#8b949e; cursor:pointer;" onclick="document.getElementById('test-order-price').value=''">
+                            ✖️ Hapus Harga (Market)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Order Action Buttons -->
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
+                    <button id="btn-order-buy" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#238636; border-color:#3fb950; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('BUY')">
+                        🟢 BUY (Market)
+                    </button>
+                    <button id="btn-order-sell" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#da3633; border-color:#f85149; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('SELL')">
+                        🔴 SELL (Market)
+                    </button>
+                    <button id="btn-order-buy-limit" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#1f6feb; border-color:#388bfd; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('BUY_LIMIT')">
+                        🔵 BUY LIMIT (Pending)
+                    </button>
+                    <button id="btn-order-sell-limit" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#8957e5; border-color:#a371f7; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('SELL_LIMIT')">
+                        🟣 SELL LIMIT (Pending)
+                    </button>
+                    <button id="btn-order-close-all" type="button" class="engine-btn" style="flex:1.2; min-width:180px; background:#6e40c9; border-color:#8957e5; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeCloseAllPositions()">
+                        🛑 CLOSE ALL & CANCEL ORDERS
+                    </button>
+                </div>
+
+                <!-- Real-time Terminal Execution Receipt Output -->
+                <div style="background:#090d13; border:1px solid #30363d; border-radius:6px; padding:12px; font-family:'Courier New', Courier, monospace; font-size:0.8rem; color:#8b949e; max-height:160px; overflow-y:auto;" id="test-pad-log">
+                    <div style="color:#58a6ff;">[SYSTEM] Simulation & Order Test Pad initialized. Siap menguji pengiriman sinyal Python Brain $\rightarrow$ MT5.</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Modal Tambah Akun -->
         <div id="add-acc-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:99999; align-items:center; justify-content:center;">
             <div class="login-card" style="max-width:500px;">
@@ -675,9 +860,277 @@
     </div>
 
     <!-- ============================================================= -->
-    <!-- TAB 3: RISK PROFILES & CIRCUIT BREAKER MATRIX                -->
+    <!-- TAB 5: TACTICAL RADAR & LIVE SETUP HUNTING HUD                -->
     <!-- ============================================================= -->
-    
+    <div id="pane-radar" class="accounts-container" style="display:none;">
+        
+        <!-- Live Ticker & Operational Status Strip -->
+        <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px 20px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+            <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                <div style="display:flex; align-items:baseline; gap:8px;">
+                    <span style="font-size:1.35rem; font-weight:800; color:#fff; letter-spacing:0.5px;">XAUUSD</span>
+                    <span style="font-size:0.75rem; background:#21262d; border:1px solid #30363d; padding:2px 8px; border-radius:10px; color:#8b949e;">SPOT GOLD</span>
+                </div>
+                <div style="display:flex; align-items:baseline; gap:12px; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">
+                    <div>
+                        <span style="font-size:0.7rem; color:#8b949e; text-transform:uppercase;">Mid Price</span>
+                        <div id="radar-price-mid" style="font-size:1.4rem; font-weight:700; color:#58a6ff;">--.--</div>
+                    </div>
+                    <div style="font-size:0.85rem;">
+                        <span style="color:#8b949e;">Bid:</span> <span id="radar-price-bid" style="color:#c9d1d9;">--</span>
+                        <span style="color:#8b949e; margin-left:8px;">Ask:</span> <span id="radar-price-ask" style="color:#c9d1d9;">--</span>
+                        <span style="color:#8b949e; margin-left:8px;">Spread:</span> <span id="radar-price-spread" style="color:#3fb950; font-weight:600;">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Badges -->
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <div id="radar-bridge-pill" class="badge" style="background:#238636; padding:6px 12px; font-size:0.78rem; display:flex; align-items:center; gap:6px;">
+                    <span class="live-beacon">●</span> <span id="radar-bridge-text">Checking Bridge Feed...</span>
+                </div>
+                <div id="radar-integrity-pill" class="badge" style="background:#1f6feb; padding:6px 12px; font-size:0.78rem; display:flex; align-items:center; gap:6px;">
+                    <span id="radar-integrity-icon">🟢</span> <span id="radar-integrity-text">100% Data Integrity</span>
+                </div>
+                <button id="btn-force-sync" class="profile-btn" style="font-size:0.75rem; padding:4px 10px; background:#21262d; border:1px solid #30363d; border-radius:6px; cursor:pointer; color:#58a6ff;" onclick="triggerForceSync()" title="Force gather 360 M1 historical bars directly from broker to ensure zero gap">
+                    🔄 Force Re-Sync
+                </button>
+                <div id="radar-window-pill" class="badge badge-cyan" style="padding:6px 12px; font-size:0.78rem;">
+                    ⏳ Golden Window: Checking...
+                </div>
+                <div style="font-size:0.8rem; color:#8b949e; font-family:monospace; background:#0d1117; padding:5px 10px; border-radius:6px; border:1px solid #30363d;">
+                    🕒 <span id="radar-clock-utc">--:--:-- UTC</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2-Column Split: Left = Interactive Chart, Right = Tactical HUD -->
+        <div style="display:grid; grid-template-columns: minmax(0, 1.85fr) minmax(360px, 1.15fr); gap:16px; align-items:start;">
+            
+            <!-- LEFT COLUMN: Chart + Overlays -->
+            <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; overflow:hidden;">
+                <div style="padding:10px 16px; border-bottom:1px solid #30363d; display:flex; justify-content:space-between; align-items:center; background:#1c2128; flex-wrap:wrap; gap:8px;">
+                    <!-- Timeframe Toggle -->
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <button id="radar-tf-m1" class="profile-btn active" style="font-size:0.8rem; padding:4px 12px; border-radius:6px;" onclick="switchRadarTimeframe('M1')">
+                            ⚡ M1 Scalper View
+                        </button>
+                        <button id="radar-tf-m15" class="profile-btn" style="font-size:0.8rem; padding:4px 12px; border-radius:6px;" onclick="switchRadarTimeframe('M15')">
+                            🏹 M15 Intraday View
+                        </button>
+                    </div>
+
+                    <!-- Overlay Legends -->
+                    <div style="display:flex; align-items:center; gap:14px; font-size:0.75rem; flex-wrap:wrap;">
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#1f6feb; border-radius:2px;"></span> VWAP</span>
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#d2a8ff; border-radius:2px;"></span> +1.8σ Upper</span>
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#56d364; border-radius:2px;"></span> -1.8σ Lower</span>
+                        <span style="display:inline-flex; align-items:center; gap:4px;"><span style="display:inline-block; width:10px; height:3px; background:#d29922; border-radius:2px;"></span> H1 EMA 50</span>
+                    </div>
+                </div>
+
+                <!-- Lightweight Chart Canvas Mount Point -->
+                <div id="radar-tv-chart" style="width:100%; height:510px; background:#0d1117; position:relative;">
+                    <div id="radar-chart-loading" style="position:absolute; top:0; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; color:#8b949e; font-size:0.85rem;">
+                        Loading live market feed...
+                    </div>
+                </div>
+
+                <!-- Chart Footer Info Strip -->
+                <div style="padding:8px 16px; border-top:1px solid #30363d; font-size:0.75rem; color:#8b949e; display:flex; justify-content:space-between; align-items:center;">
+                    <span>Auction Market Theory: 95.4% volume distribution within ±1.8σ bands</span>
+                    <span id="radar-bar-status">Waiting for bar feed...</span>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: Tactical Radar HUD (What the brain is hunting) -->
+            <div style="display:flex; flex-direction:column; gap:16px;">
+                
+                <!-- ENGINE 1: M1 Anchored VWAP Scalper HUD -->
+                <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #21262d;">
+                        <div>
+                            <div style="font-weight:700; font-size:0.95rem; color:#fff; display:flex; align-items:center; gap:6px;">
+                                ⚡ Engine 1: M1 VWAP Scalper
+                                <span class="badge badge-amber" style="font-size:0.65rem;">Magic 1001</span>
+                            </div>
+                            <div id="e1-hunting-dir" style="font-size:0.75rem; color:#8b949e; margin-top:2px;">
+                                Setup: Mean-Reversion Overextension
+                            </div>
+                        </div>
+                        <div class="state-tooltip-container">
+                            <span id="e1-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px; display:inline-flex; align-items:center; gap:4px;">
+                                HUNTING ℹ️
+                            </span>
+                            <div class="state-tooltip-dropdown">
+                                <div style="font-size:0.72rem; font-weight:700; color:#58a6ff; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; border-bottom:1px solid #30363d; padding-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                                    <span>🔄 Scalper State Pipeline</span>
+                                    <span style="font-size:0.65rem; color:#8b949e; font-weight:normal;">Urutan Siklus (Awal ➔ Akhir)</span>
+                                </div>
+                                <div id="e1-state-list">
+                                    <div class="state-step-item" data-state="STANDBY">
+                                        <span class="state-step-badge" style="background:#30363d; color:#c9d1d9;">1. STANDBY</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#8b949e;">Pasif:</strong> Di luar jam Golden Window (10:30–14:30 UTC) atau pasar tutup. Bot menjaga modal agar tidak trading di zona manipulasi.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="HUNTING">
+                                        <span class="state-step-badge" style="background:#1f6feb; color:#fff;">2. HUNTING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#58a6ff;">Scanning:</strong> Jam aktif! Memindai area nilai wajar VWAP untuk mendeteksi overextension harga ekstrem.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="ARMED">
+                                        <span class="state-step-badge" style="background:#9e6a03; color:#fff;">3. ARMED</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d29922;">Siaga 1:</strong> Harga masuk radius tembak (&lt; $2.00 dari batas Upper/Lower ±1.8σ). Bot bersiap membidik.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="CONFIRMING">
+                                        <span class="state-step-badge" style="background:#d29922; color:#fff;">4. CONFIRMING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#f0883e;">Validasi:</strong> Batas band ekstrem disentuh/ditembus! Menunggu detik :00 (bar close) untuk validasi Rejection Wick ≥ 45%.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="FIRING">
+                                        <span class="state-step-badge" style="background:#238636; color:#fff;">5. FIRING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#3fb950;">Eksekusi:</strong> Syarat wick & candle warna valid! Order BUY/SELL ditembakkan seketika via socket TCP ke MT5.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="IN_POSITION">
+                                        <span class="state-step-badge" style="background:#8957e5; color:#fff;">6. IN_POSITION</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d2a8ff;">Memantau:</strong> Posisi terbuka di broker. Bot mengawal Trailing Stop, target TP VWAP Mean, atau exit time-stop 60 menit.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="DAILY_CAP_REACHED">
+                                        <span class="state-step-badge" style="background:#da3633; color:#fff;">7. DAILY_CAP</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#f85149;">Lockout:</strong> Kuota 2 trade harian tercapai atau Circuit Breaker aktif. Bot mengunci diri hingga esok hari.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Trigger Distance Progress Gauge -->
+                    <div style="margin-bottom:16px; background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; margin-bottom:6px;">
+                            <span style="color:#8b949e;">Trigger Proximity Gauge</span>
+                            <span id="e1-dist-text" style="color:#58a6ff; font-weight:600; font-family:monospace;">Calculating...</span>
+                        </div>
+                        <div style="height:8px; background:#21262d; border-radius:4px; overflow:hidden; position:relative;">
+                            <div id="e1-gauge-bar" style="height:100%; width:50%; background:linear-gradient(90deg, #1f6feb, #3fb950); transition:width 0.4s ease;"></div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#6e7681; margin-top:4px; font-family:monospace;">
+                            <span>VWAP: <strong id="e1-val-vwap" style="color:#c9d1d9;">--</strong></span>
+                            <span>Stretch: <strong id="e1-val-stretch" style="color:#c9d1d9;">--</strong></span>
+                            <span>Band: <strong id="e1-val-band" style="color:#c9d1d9;">--</strong></span>
+                        </div>
+                    </div>
+
+                    <!-- 5-Pillar Conditions Checklist -->
+                    <div style="font-size:0.75rem; font-weight:600; color:#8b949e; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+                        Pre-Entry Criteria Checklist:
+                    </div>
+                    <div id="e1-checklist-container" style="display:flex; flex-direction:column; gap:6px;">
+                        <!-- Injected by JS -->
+                    </div>
+                </div>
+
+                <!-- ENGINE 2: M15 Intraday NFC HUD -->
+                <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #21262d;">
+                        <div>
+                            <div style="font-weight:700; font-size:0.95rem; color:#fff; display:flex; align-items:center; gap:6px;">
+                                🏹 Engine 2: M15 Fadli NFC Intraday
+                                <span class="badge badge-amber" style="font-size:0.65rem;">Magic 2001</span>
+                            </div>
+                            <div id="e2-hunting-dir" style="font-size:0.75rem; color:#8b949e; margin-top:2px;">
+                                Setup: Unfilled Base Retest + Callisto BE
+                            </div>
+                        </div>
+                        <div class="state-tooltip-container">
+                            <span id="e2-state-badge" class="badge badge-cyan" style="font-size:0.75rem; padding:4px 10px; display:inline-flex; align-items:center; gap:4px;">
+                                SCANNING ℹ️
+                            </span>
+                            <div class="state-tooltip-dropdown">
+                                <div style="font-size:0.72rem; font-weight:700; color:#a371f7; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; border-bottom:1px solid #30363d; padding-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                                    <span>🔄 Intraday State Pipeline</span>
+                                    <span style="font-size:0.65rem; color:#8b949e; font-weight:normal;">Urutan Siklus (Awal ➔ Akhir)</span>
+                                </div>
+                                <div id="e2-state-list">
+                                    <div class="state-step-item" data-state="STANDBY">
+                                        <span class="state-step-badge" style="background:#30363d; color:#c9d1d9;">1. STANDBY</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#8b949e;">Pasif:</strong> Di luar jam sesi London/NY (08:00–16:30 UTC). Bot pasif.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="SCANNING">
+                                        <span class="state-step-badge" style="background:#1f6feb; color:#fff;">2. SCANNING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#58a6ff;">Mapping:</strong> Memindai struktur M15 untuk mendeteksi zona base Unfilled Orders (DBR / RBD).</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="ARMED">
+                                        <span class="state-step-badge" style="background:#9e6a03; color:#fff;">3. ARMED</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d29922;">Siaga 1:</strong> Harga bergerak mendekati zona Supply/Demand (&lt; 30 pips).</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="CONFIRMING">
+                                        <span class="state-step-badge" style="background:#d29922; color:#fff;">4. CONFIRMING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#f0883e;">Validasi:</strong> Harga memitigasi zona! Menunggu konfirmasi pinbar / engulfing pada penutupan bar M15.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="FIRING">
+                                        <span class="state-step-badge" style="background:#238636; color:#fff;">5. FIRING</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#3fb950;">Eksekusi:</strong> Rejection terkonfirmasi! Order ditembakkan dengan target R:R 1:2.5 / 1:3.0.</div>
+                                    </div>
+                                    <div class="state-step-item" data-state="IN_POSITION">
+                                        <span class="state-step-badge" style="background:#8957e5; color:#fff;">6. IN_POSITION</span>
+                                        <div style="color:#c9d1d9; line-height:1.35;"><strong style="color:#d2a8ff;">Memantau:</strong> Posisi swing aktif. Bot memantau Callisto Breakeven ratchet dan trailing profit.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Nearest Zones Strip -->
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:14px;">
+                        <div style="background:#0d1117; border:1px solid rgba(63,185,80,0.3); border-radius:6px; padding:8px 10px;">
+                            <div style="font-size:0.7rem; color:#3fb950; font-weight:600;">DEMAND ZONE (DBR)</div>
+                            <div id="e2-demand-level" style="font-size:0.82rem; font-weight:600; color:#c9d1d9; font-family:monospace; margin-top:2px;">--</div>
+                            <div id="e2-demand-dist" style="font-size:0.7rem; color:#8b949e; margin-top:2px;">-- pips away</div>
+                        </div>
+                        <div style="background:#0d1117; border:1px solid rgba(248,81,73,0.3); border-radius:6px; padding:8px 10px;">
+                            <div style="font-size:0.7rem; color:#f85149; font-weight:600;">SUPPLY ZONE (RBD)</div>
+                            <div id="e2-supply-level" style="font-size:0.82rem; font-weight:600; color:#c9d1d9; font-family:monospace; margin-top:2px;">--</div>
+                            <div id="e2-supply-dist" style="font-size:0.7rem; color:#8b949e; margin-top:2px;">-- pips away</div>
+                        </div>
+                    </div>
+
+                    <!-- 4-Pillar Conditions Checklist -->
+                    <div style="font-size:0.75rem; font-weight:600; color:#8b949e; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+                        M15 Retest Criteria Checklist:
+                    </div>
+                    <div id="e2-checklist-container" style="display:flex; flex-direction:column; gap:6px;">
+                        <!-- Injected by JS -->
+                    </div>
+                </div>
+
+                <!-- RISK GOVERNOR HUD & SIZING TELEMETRY -->
+                <div style="background:#161b22; border:1px solid #30363d; border-radius:8px; padding:14px 16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <span style="font-size:0.8rem; font-weight:700; color:#58a6ff; text-transform:uppercase; letter-spacing:0.5px;">
+                            🛡️ Risk Governor & Auto-Sizing
+                        </span>
+                        <span id="radar-gov-status" class="badge" style="background:#238636; font-size:0.68rem;">
+                            CLEARED TO TRADE
+                        </span>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; font-size:0.75rem;">
+                        <div style="background:#0d1117; padding:8px; border-radius:6px; border:1px solid #21262d;">
+                            <div style="color:#8b949e; font-size:0.68rem;">NEXT LOT SIZE</div>
+                            <div id="radar-calc-lot" style="font-size:1.05rem; font-weight:700; color:#3fb950; font-family:monospace;">0.12 Lots</div>
+                        </div>
+                        <div style="background:#0d1117; padding:8px; border-radius:6px; border:1px solid #21262d;">
+                            <div style="color:#8b949e; font-size:0.68rem;">RISK CAPITAL</div>
+                            <div id="radar-risk-dollar" style="font-size:1.05rem; font-weight:700; color:#58a6ff; font-family:monospace;">$50.00 (0.5%)</div>
+                        </div>
+                        <div style="background:#0d1117; padding:8px; border-radius:6px; border:1px solid #21262d;">
+                            <div style="color:#8b949e; font-size:0.68rem;">DAILY LOSS CAP</div>
+                            <div id="radar-daily-cap" style="font-size:1.05rem; font-weight:700; color:#f85149; font-family:monospace;">-$100.00</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
     <!-- ============================================================= -->
     <!-- TAB 2: 4 PORTFOLIO PROFILES SHOWCASE (NEW MENU)               -->
     <!-- ============================================================= -->
@@ -2024,10 +2477,13 @@
                 if (data.success && data.token) {
                     currentAuthToken = data.token;
                     localStorage.setItem('llm_auth_token', data.token);
+                    localStorage.setItem('llm_user_email', email);
+                    document.cookie = `session_token=${data.token}; path=/; max-age=2592000; SameSite=Lax`;
                     document.getElementById('login-modal-overlay').style.display = 'none';
                     document.getElementById('user-display').textContent = email;
                     showToast('✅ Login berhasil! Brain Portal aktif.');
-                    loadAccountsDashboard();
+                    const savedTab = localStorage.getItem('llm_active_tab') || 'RADAR';
+                    switchMainTab(savedTab);
                 } else {
                     errEl.textContent = data.error || 'Email atau password salah.';
                     errEl.style.display = 'block';
@@ -2046,6 +2502,8 @@
                 }).catch(() => {});
             }
             localStorage.removeItem('llm_auth_token');
+            localStorage.removeItem('llm_user_email');
+            document.cookie = "session_token=; path=/; max-age=0";
             currentAuthToken = '';
             document.getElementById('login-modal-overlay').style.display = 'flex';
         }
@@ -2055,42 +2513,61 @@
         const ALL_PORTFOLIOS_DATA = {"res_1x": {"risk_mult": 1.0, "elapsed": 2.3590409755706787, "total_trades": 171, "win_rate": 38.6, "payoff": 3.49, "net_profit": 8865.55, "roi_pct": 88.7, "profit_factor": 2.19, "max_drawdown_pct": 9.6, "sharpe_ratio": 4.08, "green_months": "8/11", "green_months_pct": 72.7, "scalp_trades": 114, "scalp_pnl": 7729.02, "intra_trades": 57, "intra_pnl": 1136.53, "daily_win_rate": 53.5, "avg_daily_gain": 268.41, "avg_daily_loss": -116.53, "max_day_gain": 860.66, "max_day_loss": -283.02, "monthly_pnl": {"2025-05": 476.64, "2025-06": 2153.2200000000003, "2025-07": -505.28, "2025-08": 1374.37, "2025-09": 406.9599999999999, "2025-10": -270.5199999999999, "2025-11": -159.57999999999993, "2025-12": 204.82999999999993, "2026-01": 1444.68, "2026-02": 2733.0, "2026-03": 1007.2299999999998}}, "res_2x": {"risk_mult": 2.0, "elapsed": 2.315948247909546, "total_trades": 160, "win_rate": 38.1, "payoff": 3.64, "net_profit": 22654.04, "roi_pct": 226.5, "profit_factor": 2.24, "max_drawdown_pct": 21.5, "sharpe_ratio": 4.08, "green_months": "7/11", "green_months_pct": 63.6, "scalp_trades": 107, "scalp_pnl": 19987.44, "intra_trades": 53, "intra_pnl": 2666.6, "daily_win_rate": 50.5, "avg_daily_gain": 738.13, "avg_daily_loss": -290.87, "max_day_gain": 2775.67, "max_day_loss": -704.28, "monthly_pnl": {"2025-05": 934.8200000000002, "2025-06": 4910.649999999999, "2025-07": -222.25000000000003, "2025-08": 3838.1700000000005, "2025-09": 817.0099999999998, "2025-10": -831.2299999999998, "2025-11": -1625.69, "2025-12": -426.00000000000006, "2026-01": 3792.83, "2026-02": 8195.8, "2026-03": 3269.9300000000003}}, "prop_firm": {"risk_mult": 1.0, "elapsed": 2.3590409755706787, "total_trades": 171, "win_rate": 38.6, "payoff": 3.49, "net_profit": 8865.55, "roi_pct": 88.7, "profit_factor": 2.19, "max_drawdown_pct": 9.6, "sharpe_ratio": 4.08, "green_months": "8/11", "green_months_pct": 72.7, "scalp_trades": 114, "scalp_pnl": 7729.02, "intra_trades": 57, "intra_pnl": 1136.53, "daily_win_rate": 53.5, "avg_daily_gain": 268.41, "avg_daily_loss": -116.53, "max_day_gain": 860.66, "max_day_loss": -283.02, "monthly_pnl": {"2025-05": 476.64, "2025-06": 2153.2200000000003, "2025-07": -505.28, "2025-08": 1374.37, "2025-09": 406.9599999999999, "2025-10": -270.5199999999999, "2025-11": -159.57999999999993, "2025-12": 204.82999999999993, "2026-01": 1444.68, "2026-02": 2733.0, "2026-03": 1007.2299999999998}}, "sweet_spot": {"risk_mult": 1.5, "elapsed": 1.7685868740081787, "total_trades": 168, "win_rate": 38.1, "payoff": 3.52, "net_profit": 14475.06, "roi_pct": 144.8, "profit_factor": 2.17, "max_drawdown_pct": 14.2, "sharpe_ratio": 4.0, "green_months": "7/11", "green_months_pct": 63.6, "scalp_trades": 113, "scalp_pnl": 12669.57, "intra_trades": 55, "intra_pnl": 1805.49, "daily_win_rate": 52.5, "avg_daily_gain": 461.25, "avg_daily_loss": -202.34, "max_day_gain": 1584.42, "max_day_loss": -476.87, "monthly_pnl": {"2025-05": 703.8, "2025-06": 3439.98, "2025-07": -701.8699999999999, "2025-08": 2169.46, "2025-09": 710.5899999999999, "2025-10": -503.1, "2025-11": -287.65999999999997, "2025-12": -333.13, "2026-01": 2448.3299999999995, "2026-02": 4954.719999999999, "2026-03": 1873.9400000000003}}, "aggressive": {"risk_mult": 2.0, "elapsed": 2.315948247909546, "total_trades": 160, "win_rate": 38.1, "payoff": 3.64, "net_profit": 22654.04, "roi_pct": 226.5, "profit_factor": 2.24, "max_drawdown_pct": 21.5, "sharpe_ratio": 4.08, "green_months": "7/11", "green_months_pct": 63.6, "scalp_trades": 107, "scalp_pnl": 19987.44, "intra_trades": 53, "intra_pnl": 2666.6, "daily_win_rate": 50.5, "avg_daily_gain": 738.13, "avg_daily_loss": -290.87, "max_day_gain": 2775.67, "max_day_loss": -704.28, "monthly_pnl": {"2025-05": 934.8200000000002, "2025-06": 4910.649999999999, "2025-07": -222.25000000000003, "2025-08": 3838.1700000000005, "2025-09": 817.0099999999998, "2025-10": -831.2299999999998, "2025-11": -1625.69, "2025-12": -426.00000000000006, "2026-01": 3792.83, "2026-02": 8195.8, "2026-03": 3269.9300000000003}}, "yolo": {"risk_mult": 4.0, "elapsed": 1.8346757888793945, "total_trades": 132, "win_rate": 41.7, "payoff": 3.14, "net_profit": 45912.5, "roi_pct": 459.1, "profit_factor": 2.25, "max_drawdown_pct": 32.1, "sharpe_ratio": 4.12, "green_months": "8/11", "green_months_pct": 72.7, "scalp_trades": 81, "scalp_pnl": 38970.57, "intra_trades": 51, "intra_pnl": 6941.93, "daily_win_rate": 43.4, "avg_daily_gain": 1786.91, "avg_daily_loss": -552.22, "max_day_gain": 7011.23, "max_day_loss": -1519.5, "monthly_pnl": {"2025-05": 2529.0099999999998, "2025-06": 4810.76, "2025-07": -1596.7399999999993, "2025-08": 9025.24, "2025-09": 2666.6500000000005, "2025-10": -1342.61, "2025-11": -3826.9500000000003, "2025-12": 522.1199999999999, "2026-01": 6100.179999999999, "2026-02": 25607.670000000006, "2026-03": 1417.17}}};
 
         function switchMainTab(tab) {
+            localStorage.setItem('llm_active_tab', tab);
             const btnAcc = document.getElementById('nav-btn-accounts');
+            const btnRad = document.getElementById('nav-btn-radar');
             const btnPort = document.getElementById('nav-btn-portfolios');
             const btnAna = document.getElementById('nav-btn-analytics');
             const btnPro = document.getElementById('nav-btn-profiles');
 
             const paneAcc = document.getElementById('pane-accounts');
+            const paneRad = document.getElementById('pane-radar');
             const panePort = document.getElementById('pane-portfolios');
             const paneAna = document.getElementById('pane-analytics');
             const panePro = document.getElementById('pane-profiles');
 
             if (btnAcc) btnAcc.classList.remove('active');
+            if (btnRad) btnRad.classList.remove('active');
             if (btnPort) btnPort.classList.remove('active');
             if (btnAna) btnAna.classList.remove('active');
             if (btnPro) btnPro.classList.remove('active');
 
             if (paneAcc) paneAcc.style.display = 'none';
+            if (paneRad) paneRad.style.display = 'none';
             if (panePort) panePort.style.display = 'none';
             if (paneAna) paneAna.style.display = 'none';
             if (panePro) panePro.style.display = 'none';
+
+            if (tab !== 'RADAR') {
+                stopRadarPolling();
+            }
 
             if (tab === 'ACCOUNTS') {
                 if (btnAcc) btnAcc.classList.add('active');
                 if (paneAcc) paneAcc.style.display = 'block';
                 loadAccountsDashboard();
-            } else if (tab === 'PORTFOLIOS') {
-                if (btnPort) btnPort.classList.add('active');
-                if (panePort) panePort.style.display = 'block';
-                selectPortfolioView('sweet_spot');
-            } else if (tab === 'ANALYTICS') {
-                if (btnAna) btnAna.classList.add('active');
-                if (paneAna) paneAna.style.display = 'block';
-                resizeCanvases();
-                drawChart();
-            } else if (tab === 'PROFILES') {
-                if (btnPro) btnPro.classList.add('active');
-                if (panePro) panePro.style.display = 'block';
+                startAccountsPolling();
+            } else {
+                stopAccountsPolling();
+                if (tab === 'RADAR') {
+                    if (btnRad) btnRad.classList.add('active');
+                    if (paneRad) paneRad.style.display = 'block';
+                    setTimeout(() => {
+                        startRadar();
+                    }, 60);
+                } else if (tab === 'PORTFOLIOS') {
+                    if (btnPort) btnPort.classList.add('active');
+                    if (panePort) panePort.style.display = 'block';
+                    selectPortfolioView('sweet_spot');
+                } else if (tab === 'ANALYTICS') {
+                    if (btnAna) btnAna.classList.add('active');
+                    if (paneAna) paneAna.style.display = 'block';
+                    resizeCanvases();
+                    drawChart();
+                } else if (tab === 'PROFILES') {
+                    if (btnPro) btnPro.classList.add('active');
+                    if (panePro) panePro.style.display = 'block';
+                }
             }
         }
 
@@ -2357,11 +2834,768 @@
             }
         }
 
+        // =============================================================
+        // MT5 DIRECT ORDER EXECUTION & SIMULATION TEST PAD JAVASCRIPT
+        // =============================================================
+        let lastLoggedReceiptId = null;
+        let accountsPollTimer = null;
+
+        function startAccountsPolling() {
+            if (accountsPollTimer) clearInterval(accountsPollTimer);
+            fetchRadarData();
+            loadAccountsDashboard();
+            let accTicks = 0;
+            accountsPollTimer = setInterval(() => {
+                fetchRadarData();
+                accTicks++;
+                if (accTicks % 2 === 0) {
+                    loadAccountsDashboard();
+                }
+            }, 1500);
+        }
+
+        function stopAccountsPolling() {
+            if (accountsPollTimer) {
+                clearInterval(accountsPollTimer);
+                accountsPollTimer = null;
+            }
+        }
+
+        function logTestPad(msg, color = '#c9d1d9') {
+            const el = document.getElementById('test-pad-log');
+            if (!el) return;
+            const now = new Date().toTimeString().slice(0, 8);
+            const line = document.createElement('div');
+            line.style.color = color;
+            line.style.marginTop = '4px';
+            line.innerHTML = `<span style="color:#8b949e;">[${now}]</span> ${msg}`;
+            el.appendChild(line);
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function fillLimitPrice(mode) {
+            const priceInput = document.getElementById('test-order-price');
+            const tick = (radarLastData && radarLastData.tick) ? radarLastData.tick : null;
+            if (!tick || !tick.bid || !tick.ask) {
+                alert('Live price belum tersedia dari MT5 stream. Masukkan harga limit secara manual.');
+                return;
+            }
+            if (mode === 'BID_MINUS') {
+                const target = Math.floor((Number(tick.bid) - 2.0) * 100) / 100;
+                priceInput.value = target.toFixed(2);
+                logTestPad(`Limit price diatur ke: $${target.toFixed(2)} (-$2.00 di bawah Bid $${Number(tick.bid).toFixed(2)})`, '#58a6ff');
+            } else if (mode === 'ASK_PLUS') {
+                const target = Math.ceil((Number(tick.ask) + 2.0) * 100) / 100;
+                priceInput.value = target.toFixed(2);
+                logTestPad(`Limit price diatur ke: $${target.toFixed(2)} (+$2.00 di atas Ask $${Number(tick.ask).toFixed(2)})`, '#d2a8ff');
+            }
+        }
+
+        async function executeTestOrder(side) {
+            const symbol = (document.getElementById('test-order-symbol').value || 'XAUUSD').toUpperCase().trim();
+            const lots = parseFloat(document.getElementById('test-order-lots').value || 0.01);
+            const priceVal = document.getElementById('test-order-price').value.trim();
+            const price = priceVal ? parseFloat(priceVal) : 0.0;
+            const slVal = document.getElementById('test-order-sl').value.trim();
+            const sl = slVal ? parseFloat(slVal) : 0.0;
+            const tpVal = document.getElementById('test-order-tp').value.trim();
+            const tp = tpVal ? parseFloat(tpVal) : 0.0;
+            const magic = parseInt(document.getElementById('test-order-magic').value || 9999);
+
+            if (isNaN(lots) || lots <= 0) {
+                alert('Lot size harus lebih dari 0.00!');
+                return;
+            }
+
+            if ((side === 'BUY_LIMIT' || side === 'SELL_LIMIT') && price <= 0) {
+                alert(`Untuk order ${side}, kolom LIMIT PRICE wajib diisi! Gunakan tombol bantuan di atas atau masukkan harga manual.`);
+                return;
+            }
+
+            const btnId = 'btn-order-' + side.toLowerCase().replace('_', '-');
+            const btn = document.getElementById(btnId);
+            const origText = btn ? btn.innerText : '';
+            if (btn) { btn.disabled = true; btn.innerText = '🚀 Firing...'; }
+
+            const priceNote = (price > 0) ? ` @ $${price.toFixed(2)}` : ' @ Market';
+            logTestPad(`🚀 <strong>[DISPATCH]</strong> Firing sinyal <strong>${side}</strong> ${lots} lots ${symbol}${priceNote} (Magic: ${magic}) ke Python Brain...`, '#58a6ff');
+
+            try {
+                const res = await fetch('/api/order/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + currentAuthToken
+                    },
+                    body: JSON.stringify({
+                        symbol, side, lots, price, sl, tp, magic,
+                        comment: 'Pad_' + side.slice(0, 4)
+                    })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    logTestPad(`📡 <strong>[PYTHON BRAIN]</strong> Order diterima oleh Bridge! Mengirim payload TCP socket ke MT5...`, '#79c0ff');
+                    pollOrderReceipt(8);
+                } else {
+                    logTestPad(`❌ <strong>[ERROR]</strong> Gagal dispatch order: ${data.message || 'Unknown error'}`, '#f85149');
+                }
+            } catch (err) {
+                logTestPad(`❌ <strong>[NETWORK ERROR]</strong> Gagal mengirim ke dashboard server: ${err.message}`, '#f85149');
+            } finally {
+                setTimeout(() => {
+                    if (btn) { btn.disabled = false; btn.innerText = origText; }
+                }, 1000);
+            }
+        }
+
+        async function executeCloseAllPositions() {
+            if (!confirm('Yakin ingin MENUTUP SEMUA POSISI AKTIF & MEMBATALKAN SEMUA PENDING ORDER di MT5?')) return;
+
+            const btn = document.getElementById('btn-order-close-all');
+            const origText = btn ? btn.innerText : '';
+            if (btn) { btn.disabled = true; btn.innerText = '🛑 Closing All...'; }
+
+            logTestPad(`🛑 <strong>[DISPATCH]</strong> Mengirim sinyal <strong>CLOSE_ALL</strong> dari Python Brain ke MT5...`, '#f85149');
+
+            try {
+                const res = await fetch('/api/order/close_all', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + currentAuthToken
+                    },
+                    body: JSON.stringify({ symbol: '', magic: 0 })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    logTestPad(`📡 <strong>[PYTHON BRAIN]</strong> Sinyal CLOSE_ALL disiarkan ke MT5 Bridge!`, '#d2a8ff');
+                    pollOrderReceipt(8);
+                } else {
+                    logTestPad(`❌ <strong>[ERROR]</strong> Gagal close all: ${data.message}`, '#f85149');
+                }
+            } catch (err) {
+                logTestPad(`❌ <strong>[NETWORK ERROR]</strong> Gagal: ${err.message}`, '#f85149');
+            } finally {
+                setTimeout(() => {
+                    if (btn) { btn.disabled = false; btn.innerText = origText; }
+                }, 1200);
+            }
+        }
+
+        function pollOrderReceipt(remainingAttempts) {
+            if (remainingAttempts <= 0) return;
+            setTimeout(async () => {
+                try {
+                    const res = await fetch('/api/order/receipt');
+                    const data = await res.json();
+                    if (data && data.status === 'ok' && data.receipt) {
+                        const r = data.receipt;
+                        const receiptId = (r.ticket || '') + '_' + (r.deal || '') + '_' + (r.action || '') + '_' + (r.closed_positions || '') + '_' + (r.deleted_orders || '');
+                        if (receiptId !== lastLoggedReceiptId) {
+                            lastLoggedReceiptId = receiptId;
+                            if (r.action === 'CLOSE_ALL') {
+                                logTestPad(`✅ <strong>[MT5 RECEIPT]</strong> CLOSE_ALL Berhasil! Posisi Ditutup: ${r.closed_positions || 0} | Pending Order Dibatalkan: ${r.deleted_orders || 0}`, '#3fb950');
+                            } else if (r.success) {
+                                logTestPad(`✅ <strong>[MT5 RECEIPT]</strong> Order Berhasil Dieksekusi MT5! Ticket: #${r.ticket} | Harga: $${Number(r.price).toFixed(2)} | Retcode: ${r.retcode} (${r.retcode_desc || 'Done'})`, '#3fb950');
+                            } else {
+                                logTestPad(`⚠️ <strong>[MT5 REJECTED]</strong> Order Ditolak Broker MT5: Retcode ${r.retcode} (${r.retcode_desc || 'Order rejected'})`, '#f85149');
+                            }
+                            if (typeof loadAccountsDashboard === 'function') loadAccountsDashboard();
+                            return;
+                        }
+                    }
+                } catch (e) {}
+                pollOrderReceipt(remainingAttempts - 1);
+            }, 500);
+        }
+
+        // =============================================================
+        // TAB 5: TACTICAL RADAR & LIVE SETUP HUNTING HUD JAVASCRIPT
+        // =============================================================
+        let radarChart = null;
+        let radarCandleSeries = null;
+        let radarVwapSeries = null;
+        let radarUpperSeries = null;
+        let radarLowerSeries = null;
+        let radarEmaSeries = null;
+        let radarTimeframe = 'M1';
+        let radarPollTimer = null;
+        let radarLastData = null;
+        let radarInitialFitDone = { M1: false, M15: false };
+        let radarLastBarsCount = { M1: 0, M15: 0 };
+        let radarLastBarTime = { M1: 0, M15: 0 };
+
+        function startRadar() {
+            initRadarChart();
+            fetchRadarData();
+            if (radarPollTimer) clearInterval(radarPollTimer);
+            radarPollTimer = setInterval(fetchRadarData, 1000);
+        }
+
+        function stopRadarPolling() {
+            if (radarPollTimer) {
+                clearInterval(radarPollTimer);
+                radarPollTimer = null;
+            }
+        }
+
+        function switchRadarTimeframe(tf) {
+            radarTimeframe = tf;
+            radarInitialFitDone[tf] = false; // Trigger smooth fitContent once on timeframe switch
+            const btnM1 = document.getElementById('radar-tf-m1');
+            const btnM15 = document.getElementById('radar-tf-m15');
+            if (tf === 'M1') {
+                if (btnM1) btnM1.classList.add('active');
+                if (btnM15) btnM15.classList.remove('active');
+            } else {
+                if (btnM1) btnM1.classList.remove('active');
+                if (btnM15) btnM15.classList.add('active');
+            }
+            if (radarLastData) {
+                renderRadarChartSeries(radarLastData);
+            }
+        }
+
+        function initRadarChart() {
+            const container = document.getElementById('radar-tv-chart');
+            if (!container) return;
+
+            const w = container.clientWidth || container.parentElement.clientWidth || 800;
+            const h = 510;
+
+            if (w < 100) {
+                setTimeout(initRadarChart, 80);
+                return;
+            }
+
+            if (radarChart) {
+                radarChart.resize(w, h);
+                return;
+            }
+
+            if (typeof LightweightCharts === 'undefined') {
+                setTimeout(initRadarChart, 150);
+                return;
+            }
+
+            container.innerHTML = '';
+
+            radarChart = LightweightCharts.createChart(container, {
+                width: w,
+                height: h,
+                layout: {
+                    background: { color: '#0d1117' },
+                    textColor: '#8b949e',
+                    fontSize: 11,
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace'
+                },
+                grid: {
+                    vertLines: { color: 'rgba(48, 54, 61, 0.4)' },
+                    horzLines: { color: 'rgba(48, 54, 61, 0.4)' }
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal
+                },
+                rightPriceScale: {
+                    borderColor: '#30363d',
+                    autoScale: true
+                },
+                timeScale: {
+                    borderColor: '#30363d',
+                    timeVisible: true,
+                    secondsVisible: false,
+                    rightOffset: 8,
+                    barSpacing: 10,
+                    minBarSpacing: 4
+                }
+            });
+
+            radarCandleSeries = radarChart.addCandlestickSeries({
+                upColor: '#3fb950',
+                downColor: '#f85149',
+                borderUpColor: '#3fb950',
+                borderDownColor: '#f85149',
+                wickUpColor: '#3fb950',
+                wickDownColor: '#f85149'
+            });
+
+            radarVwapSeries = radarChart.addLineSeries({
+                color: '#1f6feb',
+                lineWidth: 2,
+                title: 'VWAP'
+            });
+
+            radarUpperSeries = radarChart.addLineSeries({
+                color: '#d2a8ff',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                title: '+1.8σ'
+            });
+
+            radarLowerSeries = radarChart.addLineSeries({
+                color: '#56d364',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                title: '-1.8σ'
+            });
+
+            radarEmaSeries = radarChart.addLineSeries({
+                color: '#d29922',
+                lineWidth: 1.5,
+                title: 'H1 EMA 50'
+            });
+
+            window.addEventListener('resize', () => {
+                if (radarChart && container) {
+                    const newW = container.clientWidth;
+                    if (newW > 100) {
+                        radarChart.resize(newW, 510);
+                    }
+                }
+            });
+        }
+
+        async function fetchRadarData() {
+            try {
+                const res = await fetch('/api/radar');
+                if (!res.ok) return;
+                const data = await res.json();
+                radarLastData = data;
+                updateRadarUI(data);
+            } catch (e) {
+                console.debug('Radar poll error:', e);
+            }
+        }
+
+        async function triggerForceSync() {
+            const btn = document.getElementById('btn-force-sync');
+            if (btn) {
+                btn.innerText = '⏳ Syncing...';
+                btn.disabled = true;
+            }
+            try {
+                await fetch('/api/force_sync', { method: 'POST' });
+                setTimeout(fetchRadarData, 600);
+            } catch (e) {
+                console.error("Force sync error:", e);
+            }
+            setTimeout(() => {
+                if (btn) {
+                    btn.innerText = '🔄 Force Re-Sync';
+                    btn.disabled = false;
+                }
+            }, 2500);
+        }
+
+        function updateRadarUI(data) {
+            if (!data) return;
+
+            // 1. Ticker strip
+            const tick = data.tick || {};
+            const elMid = document.getElementById('radar-price-mid');
+            const elBid = document.getElementById('radar-price-bid');
+            const elAsk = document.getElementById('radar-price-ask');
+            const elSpread = document.getElementById('radar-price-spread');
+
+            if (elMid && tick.mid) elMid.innerText = Number(tick.mid).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            if (elBid && tick.bid) elBid.innerText = Number(tick.bid).toFixed(2);
+            if (elAsk && tick.ask) elAsk.innerText = Number(tick.ask).toFixed(2);
+            if (elSpread && tick.spread !== undefined) elSpread.innerText = '$' + Number(tick.spread).toFixed(2);
+
+            // Bridge pill
+            const elBridgePill = document.getElementById('radar-bridge-pill');
+            const elBridgeText = document.getElementById('radar-bridge-text');
+            if (elBridgePill && elBridgeText) {
+                if (data.status === 'LIVE_STREAMING') {
+                    elBridgePill.style.background = '#238636';
+                    elBridgeText.innerText = 'MT5 Bridge Streaming (TCP: 5555)';
+                } else {
+                    elBridgePill.style.background = '#9e6a03';
+                    elBridgeText.innerText = 'Bridge Standby / Parquet Replay';
+                }
+            }
+
+            // Update Test Pad Price References & Status
+            const padBid = document.getElementById('pad-live-bid');
+            const padAsk = document.getElementById('pad-live-ask');
+            const padSpread = document.getElementById('pad-live-spread');
+            const padConn = document.getElementById('test-pad-conn');
+            if (padBid && tick.bid) padBid.innerText = 'Bid: $' + Number(tick.bid).toFixed(2);
+            if (padAsk && tick.ask) padAsk.innerText = 'Ask: $' + Number(tick.ask).toFixed(2);
+            if (padSpread && tick.spread !== undefined) padSpread.innerText = '$' + Number(tick.spread).toFixed(2);
+            if (padConn) {
+                if (data.status === 'LIVE_STREAMING') {
+                    padConn.innerHTML = '<span style="color:#3fb950; font-weight:bold;">🟢 MT5 Streaming Live</span>';
+                } else {
+                    padConn.innerHTML = '<span style="color:#e3b341; font-weight:bold;">🟡 Standby / Disconnected</span>';
+                }
+            }
+
+            // Data Integrity Pill
+            const integrity = data.data_integrity || {};
+            const elIntegPill = document.getElementById('radar-integrity-pill');
+            const elIntegText = document.getElementById('radar-integrity-text');
+            const elIntegIcon = document.getElementById('radar-integrity-icon');
+            if (elIntegPill && elIntegText) {
+                const st = integrity.status || 'SYNCHRONIZED';
+                if (st === 'SYNCHRONIZED') {
+                    elIntegPill.style.background = '#1f6feb';
+                    if (elIntegIcon) elIntegIcon.innerText = '🟢';
+                    elIntegText.innerText = `100% Data Integrity (${integrity.synced_bars || 360} Bars)`;
+                } else if (st === 'SYNCING') {
+                    elIntegPill.style.background = '#9e6a03';
+                    if (elIntegIcon) elIntegIcon.innerText = '🟡';
+                    elIntegText.innerText = 'Syncing Broker Bars... (Trade Paused)';
+                } else {
+                    elIntegPill.style.background = '#da3633';
+                    if (elIntegIcon) elIntegIcon.innerText = '🔴';
+                    elIntegText.innerText = `Data Gap / Syncing Needed (${integrity.synced_bars || 0} Bars)`;
+                }
+            }
+
+            // Window pill
+            const elWindowPill = document.getElementById('radar-window-pill');
+            const e1Checklist = (data.engine_1 && data.engine_1.checklist) || [];
+            if (elWindowPill && e1Checklist[0]) {
+                elWindowPill.innerText = '⚡ ' + e1Checklist[0].val;
+                if (e1Checklist[0].ok) {
+                    elWindowPill.className = 'badge badge-cyan';
+                } else {
+                    elWindowPill.className = 'badge';
+                    elWindowPill.style.background = '#30363d';
+                }
+            }
+
+            // Clock
+            const elClock = document.getElementById('radar-clock-utc');
+            if (elClock && data.updated_at) {
+                const d = new Date(data.updated_at);
+                elClock.innerText = d.toUTCString().slice(17, 25) + ' UTC';
+            }
+
+            // 2. Engine 1 Card
+            const e1 = data.engine_1 || {};
+            const elE1Badge = document.getElementById('e1-state-badge');
+            const elE1Dir = document.getElementById('e1-hunting-dir');
+            const elE1Dist = document.getElementById('e1-dist-text');
+            const elE1Bar = document.getElementById('e1-gauge-bar');
+            const elE1Vwap = document.getElementById('e1-val-vwap');
+            const elE1Stretch = document.getElementById('e1-val-stretch');
+            const elE1Band = document.getElementById('e1-val-band');
+
+            if (elE1Badge) {
+                const curState = e1.state || 'STANDBY';
+                elE1Badge.innerHTML = `${curState} <span style="font-size:0.65rem; opacity:0.8;">ℹ️</span>`;
+                elE1Badge.className = 'badge ' + (e1.state_badge || 'badge-cyan');
+
+                // Dynamically highlight active pipeline step
+                document.querySelectorAll('#e1-state-list .state-step-item').forEach(el => {
+                    if (el.getAttribute('data-state') === curState) {
+                        el.classList.add('active');
+                    } else {
+                        el.classList.remove('active');
+                    }
+                });
+            }
+            if (elE1Dir) elE1Dir.innerText = 'Hunting: ' + (e1.hunting_direction || 'Mean Reversion');
+            if (elE1Vwap) elE1Vwap.innerText = e1.vwap ? '$' + Number(e1.vwap).toFixed(2) : '--';
+            if (elE1Stretch) elE1Stretch.innerText = (e1.stretch_sigma ? (e1.stretch_sigma > 0 ? '+' : '') + Number(e1.stretch_sigma).toFixed(2) : '0.00') + 'σ';
+            
+            const isUpperTarget = (tick.mid >= (e1.vwap || 0));
+            const targetBand = isUpperTarget ? e1.upper_band : e1.lower_band;
+            if (elE1Band) elE1Band.innerText = targetBand ? '$' + Number(targetBand).toFixed(2) : '--';
+
+            const distVal = isUpperTarget ? e1.dist_to_upper : e1.dist_to_lower;
+            if (elE1Dist) {
+                if (distVal !== undefined && distVal !== null) {
+                    if (distVal <= 0) {
+                        elE1Dist.innerText = 'EXTREME REACHED (Trigger Zone)';
+                        elE1Dist.style.color = '#3fb950';
+                    } else {
+                        elE1Dist.innerText = '$' + Math.abs(distVal).toFixed(2) + ' to ' + (isUpperTarget ? 'Upper' : 'Lower') + ' Band';
+                        elE1Dist.style.color = '#58a6ff';
+                    }
+                }
+            }
+            if (elE1Bar) {
+                const totalBandDist = Math.abs((targetBand || 0) - (e1.vwap || 0)) || 5.0;
+                const currentProg = Math.min(100, Math.max(10, Math.round((1.0 - (Math.max(0, distVal || 0) / totalBandDist)) * 100)));
+                elE1Bar.style.width = currentProg + '%';
+                if (currentProg >= 95) {
+                    elE1Bar.style.background = 'linear-gradient(90deg, #d29922, #3fb950)';
+                } else {
+                    elE1Bar.style.background = 'linear-gradient(90deg, #1f6feb, #58a6ff)';
+                }
+            }
+
+            // Checklist E1
+            const elE1Checks = document.getElementById('e1-checklist-container');
+            if (elE1Checks && e1.checklist) {
+                elE1Checks.innerHTML = e1.checklist.map(item => `
+                    <div class="radar-check-row">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span class="radar-check-dot ${item.ok ? 'dot-ok' : 'dot-wait'}"></span>
+                            <span style="color:#c9d1d9;">${item.label}</span>
+                        </div>
+                        <span style="color:${item.ok ? '#3fb950' : '#8b949e'}; font-family:monospace; font-size:0.75rem;">
+                            ${item.ok ? '✓ ' : '⏳ '}${item.val}
+                        </span>
+                    </div>
+                `).join('');
+            }
+
+            // 3. Engine 2 Card
+            const e2 = data.engine_2 || {};
+            const elE2Badge = document.getElementById('e2-state-badge');
+            if (elE2Badge) {
+                const curState2 = e2.state || 'SCANNING';
+                elE2Badge.innerHTML = `${curState2} <span style="font-size:0.65rem; opacity:0.8;">ℹ️</span>`;
+                elE2Badge.className = 'badge ' + (e2.state_badge || 'badge-cyan');
+
+                // Dynamically highlight active pipeline step
+                document.querySelectorAll('#e2-state-list .state-step-item').forEach(el => {
+                    if (el.getAttribute('data-state') === curState2) {
+                        el.classList.add('active');
+                    } else {
+                        el.classList.remove('active');
+                    }
+                });
+            }
+
+            const elE2DemLvl = document.getElementById('e2-demand-level');
+            const elE2DemDist = document.getElementById('e2-demand-dist');
+            const elE2SupLvl = document.getElementById('e2-supply-level');
+            const elE2SupDist = document.getElementById('e2-supply-dist');
+
+            if (elE2DemLvl && e2.nearest_demand) {
+                const typeText = e2.nearest_demand.type_short || 'DEMAND';
+                const scoreText = e2.nearest_demand.score ? ` [${e2.nearest_demand.score}pts]` : '';
+                elE2DemLvl.innerText = `$${e2.nearest_demand.bottom || 0} - $${e2.nearest_demand.top || 0}`;
+                if (elE2DemDist && e2.dist_demand_pips !== undefined) {
+                    elE2DemDist.innerText = `${typeText}${scoreText} • ${e2.dist_demand_pips} pips away`;
+                }
+            }
+            if (elE2SupLvl && e2.nearest_supply) {
+                const typeText = e2.nearest_supply.type_short || 'SUPPLY';
+                const scoreText = e2.nearest_supply.score ? ` [${e2.nearest_supply.score}pts]` : '';
+                elE2SupLvl.innerText = `$${e2.nearest_supply.bottom || 0} - $${e2.nearest_supply.top || 0}`;
+                if (elE2SupDist && e2.dist_supply_pips !== undefined) {
+                    elE2SupDist.innerText = `${typeText}${scoreText} • ${e2.dist_supply_pips} pips away`;
+                }
+            }
+
+            // Checklist E2
+            const elE2Checks = document.getElementById('e2-checklist-container');
+            if (elE2Checks && e2.checklist) {
+                elE2Checks.innerHTML = e2.checklist.map(item => `
+                    <div class="radar-check-row">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span class="radar-check-dot ${item.ok ? 'dot-ok' : 'dot-wait'}"></span>
+                            <span style="color:#c9d1d9;">${item.label}</span>
+                        </div>
+                        <span style="color:${item.ok ? '#3fb950' : '#8b949e'}; font-family:monospace; font-size:0.75rem;">
+                            ${item.ok ? '✓ ' : '⏳ '}${item.val}
+                        </span>
+                    </div>
+                `).join('');
+            }
+
+            // 4. Governor Box
+            const acc = data.account || {};
+            const elLot = document.getElementById('radar-calc-lot');
+            const elRisk = document.getElementById('radar-risk-dollar');
+            const elCap = document.getElementById('radar-daily-cap');
+
+            if (elLot && acc.estimated_lot) elLot.innerText = `${acc.estimated_lot} Lots`;
+            if (elRisk && acc.risk_dollar) elRisk.innerText = `$${acc.risk_dollar} (${acc.base_risk_pct || 0.5}%)`;
+            if (elCap) elCap.innerText = '-$100.00';
+
+            // 5. Render Chart Series
+            renderRadarChartSeries(data);
+        }
+
+        function renderRadarChartSeries(data) {
+            if (!radarChart || !radarCandleSeries) return;
+
+            const container = document.getElementById('radar-tv-chart');
+            if (container && container.clientWidth > 100) {
+                if (radarChart.__lastWidth !== container.clientWidth) {
+                    radarChart.resize(container.clientWidth, 510);
+                    radarChart.__lastWidth = container.clientWidth;
+                }
+            }
+
+            const rawBars = (radarTimeframe === 'M1' ? data.bars_m1 : data.bars_m15) || [];
+            if (!rawBars.length) return;
+
+            // 1. Deduplicate by timestamp
+            const map = new Map();
+            rawBars.forEach(b => {
+                if (b && b.time && !isNaN(b.open) && !isNaN(b.high) && !isNaN(b.low) && !isNaN(b.close)) {
+                    map.set(b.time, b);
+                }
+            });
+
+            // 2. Include live forming bar on M1 if available
+            if (radarTimeframe === 'M1' && data.current_bar) {
+                const cb = data.current_bar;
+                if (cb && cb.time && !isNaN(cb.open) && !isNaN(cb.close)) {
+                    const existing = map.get(cb.time);
+                    if (existing) {
+                        existing.high = Math.max(existing.high, Number(cb.high));
+                        existing.low = Math.min(existing.low, Number(cb.low));
+                        existing.close = Number(cb.close);
+                    } else {
+                        map.set(cb.time, cb);
+                    }
+                }
+            }
+
+            const sortedBars = Array.from(map.values()).sort((a, b) => a.time - b.time);
+            if (!sortedBars.length) return;
+
+            // 3. Strict Monotonic Filter: t[i] > t[i-1] (guarantees NO duplicates, NO reverse time)
+            const cleanCandles = [];
+            let lastT = -1;
+            for (let b of sortedBars) {
+                if (b.time > lastT) {
+                    cleanCandles.push({
+                        time: b.time,
+                        open: Number(b.open),
+                        high: Number(b.high),
+                        low: Number(b.low),
+                        close: Number(b.close)
+                    });
+                    lastT = b.time;
+                }
+            }
+            if (!cleanCandles.length) return;
+
+            // Extract indicator line values
+            const e1 = data.engine_1 || {};
+            const upperVal = Number(e1.upper_band);
+            const lowerVal = Number(e1.lower_band);
+            const emaVal = Number(e1.macro_ema50);
+
+            // Inherit VWAP & Bands from pre-computed bar points to prevent live forming bar jumping
+            const vwapData = [];
+            cleanCandles.forEach((c, idx) => {
+                const src = map.get(c.time);
+                let val = (src && src.vwap !== undefined && !isNaN(src.vwap)) ? Number(src.vwap) : null;
+                if (val === null && idx > 0 && vwapData[idx - 1]) {
+                    val = vwapData[idx - 1].value;
+                } else if (val === null) {
+                    val = Number(e1.vwap);
+                }
+                if (val > 0) vwapData.push({ time: c.time, value: val });
+            });
+
+            const upperData = [];
+            cleanCandles.forEach((c, idx) => {
+                const src = map.get(c.time);
+                let val = (src && src.upper !== undefined && !isNaN(src.upper)) ? Number(src.upper) : null;
+                if (val === null && idx > 0 && upperData[idx - 1]) {
+                    val = upperData[idx - 1].value;
+                } else if (val === null) {
+                    val = upperVal;
+                }
+                if (val > 0) upperData.push({ time: c.time, value: val });
+            });
+
+            const lowerData = [];
+            cleanCandles.forEach((c, idx) => {
+                const src = map.get(c.time);
+                let val = (src && src.lower !== undefined && !isNaN(src.lower)) ? Number(src.lower) : null;
+                if (val === null && idx > 0 && lowerData[idx - 1]) {
+                    val = lowerData[idx - 1].value;
+                } else if (val === null) {
+                    val = lowerVal;
+                }
+                if (val > 0) lowerData.push({ time: c.time, value: val });
+            });
+
+            const emaData = (emaVal > 0) ? cleanCandles.map(c => ({ time: c.time, value: emaVal })) : [];
+
+            const isInitial = !radarInitialFitDone[radarTimeframe];
+            const barCountDiff = Math.abs(cleanCandles.length - radarLastBarsCount[radarTimeframe]);
+
+            // Initial load or major batch update: full setData with viewport stability
+            if (isInitial || barCountDiff > 3) {
+                try {
+                    let prevRange = null;
+                    if (!isInitial && radarChart && radarChart.timeScale) {
+                        try {
+                            prevRange = radarChart.timeScale().getVisibleLogicalRange();
+                        } catch(e) {}
+                    }
+
+                    radarCandleSeries.setData(cleanCandles);
+                    if (radarTimeframe === 'M1') {
+                        if (vwapData.length) radarVwapSeries.setData(vwapData);
+                        if (upperData.length) radarUpperSeries.setData(upperData);
+                        if (lowerData.length) radarLowerSeries.setData(lowerData);
+                        if (emaData.length) radarEmaSeries.setData(emaData);
+                    } else {
+                        if (radarVwapSeries) radarVwapSeries.setData([]);
+                        if (radarUpperSeries) radarUpperSeries.setData([]);
+                        if (radarLowerSeries) radarLowerSeries.setData([]);
+                        if (radarEmaSeries) radarEmaSeries.setData([]);
+                    }
+
+                    if (isInitial) {
+                        radarChart.timeScale().fitContent();
+                        radarInitialFitDone[radarTimeframe] = true;
+                    } else if (prevRange) {
+                        try {
+                            radarChart.timeScale().setVisibleLogicalRange(prevRange);
+                        } catch(e) {}
+                    }
+                    radarLastBarsCount[radarTimeframe] = cleanCandles.length;
+                    radarLastBarTime[radarTimeframe] = cleanCandles[cleanCandles.length - 1].time;
+                } catch (err) {
+                    console.error("Error setting candle data:", err);
+                }
+            } else {
+                // Smooth incremental 1-second update (NO fitContent(), NO canvas flickering!)
+                const lastCandle = cleanCandles[cleanCandles.length - 1];
+                try {
+                    radarCandleSeries.update(lastCandle);
+                    if (radarTimeframe === 'M1') {
+                        if (vwapData.length) radarVwapSeries.update(vwapData[vwapData.length - 1]);
+                        if (upperData.length) radarUpperSeries.update(upperData[upperData.length - 1]);
+                        if (lowerData.length) radarLowerSeries.update(lowerData[lowerData.length - 1]);
+                        if (emaData.length) radarEmaSeries.update(emaData[emaData.length - 1]);
+                    }
+                    radarLastBarTime[radarTimeframe] = lastCandle.time;
+                    radarLastBarsCount[radarTimeframe] = cleanCandles.length;
+                } catch (err) {
+                    radarCandleSeries.setData(cleanCandles);
+                }
+            }
+
+            const loadingEl = document.getElementById('radar-chart-loading');
+            if (loadingEl) loadingEl.style.display = 'none';
+
+            const elBarStatus = document.getElementById('radar-bar-status');
+            if (elBarStatus && cleanCandles.length > 0) {
+                elBarStatus.innerText = `Viewing ${cleanCandles.length} bars (${radarTimeframe}) | Last: $${cleanCandles[cleanCandles.length - 1].close.toFixed(2)}`;
+            }
+        }
+
         // Check authentication state on page load
         window.addEventListener('DOMContentLoaded', () => {
             if (currentAuthToken) {
                 document.getElementById('login-modal-overlay').style.display = 'none';
-                loadAccountsDashboard();
+                const savedEmail = localStorage.getItem('llm_user_email');
+                if (savedEmail) {
+                    const ud = document.getElementById('user-display');
+                    if (ud) ud.textContent = savedEmail;
+                }
+                let targetTab = localStorage.getItem('llm_active_tab') || 'RADAR';
+                if (window.location.pathname === '/radar' || window.location.hash === '#radar') {
+                    targetTab = 'RADAR';
+                }
+                switchMainTab(targetTab);
             } else {
                 document.getElementById('login-modal-overlay').style.display = 'flex';
             }

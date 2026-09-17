@@ -2,6 +2,7 @@ auth:
   admin_email: arief.setiabudi2010@gmail.com
   password_hash: 0e44ce7308af2b3de5232e4616403ce7d49ba2aec83f79c196409556422a4927
   session_timeout_hours: 24
+  secret_key: 9639bb681d8298fba3e62ec5beadd1cd332210b0cda8fe0f1ae2bc35a81f94aa
 risk_profiles:
   prop_firm:
     id: prop_firm

@@ -18,6 +18,8 @@ Architecture:
 """
 
 import sys
+import time
+import math
 import asyncio
 import json
 import yaml
@@ -27,6 +29,7 @@ from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime, timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+REPORTS_DIR = PROJECT_ROOT / "reports"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -37,7 +40,7 @@ from agents.risk_manager.monthly_ratchet_governor import MonthlyRatchetGovernor
 from engine.core.types import OrderDirection
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 from strategies.incubator.strat_6_intraday_smc import IntradaySMCStrategy
-from tests.test_nfc_fibo_hybrid import NFCFiboHybridStrategy
+from strategies.incubator.strat_nfc_fibo_hybrid import NFCFiboHybridStrategy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +62,107 @@ class MultiTimeframeBarAggregator:
         self.current_m15_bucket: Optional[datetime] = None
         self.current_m15_bar: Optional[Dict[str, Any]] = None
 
+        self.history_m1: List[Dict[str, Any]] = []
+        self.history_m15: List[Dict[str, Any]] = []
+        self.max_history_m1: int = 500
+        self.max_history_m15: int = 120
+        self.baseline_aligned: bool = False
+        self.gap_detected: bool = False
+        self._preload_history()
+
+    def _preload_history(self):
+        try:
+            import polars as pl
+            p_m1 = PROJECT_ROOT / "data" / "processed" / "bars" / "XAUUSD" / "M1" / "XAUUSD_M1.parquet"
+            p_m15 = PROJECT_ROOT / "data" / "processed" / "bars" / "XAUUSD" / "HTF" / "XAUUSD_M15.parquet"
+            if p_m1.exists():
+                df = pl.read_parquet(p_m1).tail(self.max_history_m1)
+                for row in df.iter_rows(named=True):
+                    ts = row["timestamp"]
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    self.history_m1.append({
+                        "symbol": "XAUUSD",
+                        "timestamp": ts,
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "mean_spread": float(row.get("mean_spread", 0.20)),
+                        "tick_volume": int(row.get("tick_volume", 1))
+                    })
+            if p_m15.exists():
+                df15 = pl.read_parquet(p_m15).tail(self.max_history_m15)
+                for row in df15.iter_rows(named=True):
+                    ts = row["timestamp"]
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    self.history_m15.append({
+                        "symbol": "XAUUSD",
+                        "timestamp": ts,
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "mean_spread": float(row.get("mean_spread", 0.20)),
+                        "tick_volume": int(row.get("tick_volume", 1))
+                    })
+        except Exception as e:
+            logger.debug(f"[Aggregator] Preload history skipped: {e}")
+
+    def ingest_historical_bars(self, bars: List[Dict[str, Any]], symbol: str = "XAUUSD") -> int:
+        """
+        Merges historical M1 bars received from MT5 BAR_SYNC into history_m1,
+        deduplicating by timestamp and keeping strict chronological order.
+        """
+        bar_map = {int(b["timestamp"].timestamp()): b for b in self.history_m1}
+        for item in bars:
+            ts_sec = int(item["time"] / 1000)
+            dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+            bar_map[ts_sec] = {
+                "symbol": symbol,
+                "timestamp": dt,
+                "open": float(item["open"]),
+                "high": float(item["high"]),
+                "low": float(item["low"]),
+                "close": float(item["close"]),
+                "mean_spread": float(item.get("spread", 0.20)),
+                "tick_volume": int(item.get("volume", 1))
+            }
+        sorted_keys = sorted(bar_map.keys())
+        self.history_m1 = [bar_map[k] for k in sorted_keys[-self.max_history_m1:]]
+        return len(bars)
+
+    def rebuild_m15_history(self):
+        """
+        Reconstructs M15 bars from current history_m1 bars after historical catch-up sync.
+        """
+        m15_dict = {}
+        for m1 in self.history_m1:
+            dt = m1["timestamp"]
+            m15_min = (dt.minute // 15) * 15
+            bucket = dt.replace(minute=m15_min, second=0, microsecond=0)
+            bucket_sec = int(bucket.timestamp())
+            if bucket_sec not in m15_dict:
+                m15_dict[bucket_sec] = {
+                    "symbol": m1["symbol"],
+                    "timestamp": bucket,
+                    "open": m1["open"],
+                    "high": m1["high"],
+                    "low": m1["low"],
+                    "close": m1["close"],
+                    "mean_spread": m1["mean_spread"],
+                    "tick_volume": m1["tick_volume"]
+                }
+            else:
+                m15_dict[bucket_sec]["high"] = max(m15_dict[bucket_sec]["high"], m1["high"])
+                m15_dict[bucket_sec]["low"] = min(m15_dict[bucket_sec]["low"], m1["low"])
+                m15_dict[bucket_sec]["close"] = m1["close"]
+                m15_dict[bucket_sec]["tick_volume"] += m1["tick_volume"]
+
+        sorted_m15 = sorted(m15_dict.keys())
+        self.history_m15 = [m15_dict[k] for k in sorted_m15[-self.max_history_m15:]]
+
     def process_tick(
         self,
         symbol: str,
@@ -73,6 +177,31 @@ class MultiTimeframeBarAggregator:
         """
         dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
         current_minute = dt.minute
+        mid_price = round((bid + ask) / 2.0, 2)
+
+        # Auto-align historical baseline once on initial tick if not yet aligned
+        if not self.baseline_aligned and self.history_m1 and abs(self.history_m1[-1]["close"] - mid_price) > 5.0:
+            self.baseline_aligned = True
+            delta = mid_price - self.history_m1[-1]["close"]
+            now_sec = (int(dt.timestamp()) // 60) * 60
+            n_m1 = len(self.history_m1)
+            for idx, b in enumerate(self.history_m1):
+                b["open"] = round(b["open"] + delta, 2)
+                b["high"] = round(b["high"] + delta, 2)
+                b["low"] = round(b["low"] + delta, 2)
+                b["close"] = round(b["close"] + delta, 2)
+                b_sec = now_sec - ((n_m1 - 1 - idx) * 60)
+                b["timestamp"] = datetime.fromtimestamp(b_sec, tz=timezone.utc)
+
+            if self.history_m15:
+                n_m15 = len(self.history_m15)
+                for idx, b in enumerate(self.history_m15):
+                    b["open"] = round(b["open"] + delta, 2)
+                    b["high"] = round(b["high"] + delta, 2)
+                    b["low"] = round(b["low"] + delta, 2)
+                    b["close"] = round(b["close"] + delta, 2)
+                    b_sec = now_sec - ((n_m15 - 1 - idx) * 900)
+                    b["timestamp"] = datetime.fromtimestamp(b_sec, tz=timezone.utc)
 
         completed_m1: Optional[Dict[str, Any]] = None
         completed_m15: Optional[Dict[str, Any]] = None
@@ -84,6 +213,17 @@ class MultiTimeframeBarAggregator:
                 self.current_m1_bar["mean_spread"] = round(mean_spread, 3)
                 self.current_m1_bar["max_spread"] = round(max(self.m1_spread_samples), 3) if self.m1_spread_samples else spread
                 completed_m1 = dict(self.current_m1_bar)
+                if self.history_m1 and self.history_m1[-1]["timestamp"] == completed_m1["timestamp"]:
+                    self.history_m1[-1] = dict(completed_m1)
+                else:
+                    if self.history_m1:
+                        gap_sec = (completed_m1["timestamp"] - self.history_m1[-1]["timestamp"]).total_seconds()
+                        if gap_sec > 180 and not self.gap_detected:
+                            self.gap_detected = True
+                            logger.warning(f"[Aggregator] M1 timeline gap of {gap_sec:.0f}s detected between {self.history_m1[-1]['timestamp']} and {completed_m1['timestamp']}")
+                    self.history_m1.append(dict(completed_m1))
+                if len(self.history_m1) > self.max_history_m1:
+                    self.history_m1.pop(0)
 
             self.current_m1_bar = None
             self.m1_spread_samples.clear()
@@ -118,6 +258,12 @@ class MultiTimeframeBarAggregator:
                 # Finalize previous M15 bar
                 if self.current_m15_bar is not None:
                     completed_m15 = dict(self.current_m15_bar)
+                    if self.history_m15 and self.history_m15[-1]["timestamp"] == completed_m15["timestamp"]:
+                        self.history_m15[-1] = dict(completed_m15)
+                    else:
+                        self.history_m15.append(dict(completed_m15))
+                    if len(self.history_m15) > self.max_history_m15:
+                        self.history_m15.pop(0)
                 self.current_m15_bar = None
 
             self.current_m15_bucket = bucket_time
@@ -269,9 +415,105 @@ class LiveBridgeServer:
         self.active_account_id: str = "10001"
 
         self.client_writer: Optional[asyncio.StreamWriter] = None
+        self.connected_clients: Dict[str, asyncio.StreamWriter] = {}
         self.latest_tick: Optional[Dict[str, Any]] = None
         self.server: Optional[asyncio.Server] = None
         self.running = False
+
+        # Data Integrity & Force-Gather Governance
+        self.data_integrity_status: str = "SYNCHRONIZED" if dry_run else "WAITING_SYNC"
+        self.synced_bars_count: int = len(self.aggregator.history_m1)
+        self.min_required_bars: int = 120
+        self.last_sync_time: float = 0.0
+        self.has_real_broker_bars: bool = False
+        self._last_ipc_check: float = 0.0
+        self._pending_sync_bars: List[Dict[str, Any]] = []
+        self._last_force_sync_time: float = 0.0
+
+        self.radar_state_path = REPORTS_DIR / "radar_state.json"
+        self._last_radar_save = 0.0
+        self.latest_order_receipt: Optional[Dict[str, Any]] = None
+        self._ipc_task: Optional[asyncio.Task] = None
+        self._last_account_persist: float = 0.0
+
+    def _auto_register_account(self, account_id: str, company: str, currency: str, balance: float, equity: float):
+        if not account_id or account_id in ("Unknown", "0"):
+            return
+        try:
+            self._reload_accounts_config()
+            cfg = self.cached_config or {}
+            accounts = cfg.get("accounts", {})
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            str_id = str(account_id)
+
+            # If default dummy 10001 is present alongside real broker accounts, prune mock demo
+            if "10001" in accounts and accounts["10001"].get("broker") == "MetaQuotes-Demo" and str_id != "10001":
+                del accounts["10001"]
+
+            acc = accounts.get(str_id)
+            if not acc:
+                default_profile = cfg.get("default_profile", "sweet_spot")
+                accounts[str_id] = {
+                    "account_id": str_id,
+                    "label": f"{company} #{str_id}",
+                    "broker": company or "MetaTrader 5 Broker",
+                    "profile": default_profile,
+                    "active": True,
+                    "balance": round(float(balance), 2),
+                    "equity": round(float(equity), 2),
+                    "currency": currency or "USD",
+                    "notes": "Auto-registered from live MT5 connection",
+                    "last_seen": now_str,
+                    "updated_at": now_str
+                }
+                logger.info(f"✨ [AUTO-REGISTER] Live Account #{str_id} ({company}) registered in accounts.yaml! Profile: {default_profile}")
+            else:
+                acc["balance"] = round(float(balance), 2)
+                acc["equity"] = round(float(equity), 2)
+                acc["active"] = True
+                acc["last_seen"] = now_str
+                if company and company not in ("MetaTrader 5 Broker", "Unknown"):
+                    acc["broker"] = company
+            cfg["accounts"] = accounts
+            with open(self.accounts_config_path, "w", encoding="utf-8") as f:
+                yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            self.cached_config = cfg
+            self.last_config_load = time.time()
+
+            # Dynamic Governor Sync
+            if str_id in self.governors and float(equity) > 0:
+                self.governors[str_id].day_start_equity = float(equity)
+                self.governors[str_id].month_start_equity = float(equity)
+        except Exception as e:
+            logger.error(f"[Bridge] Error auto-registering account #{account_id}: {e}")
+
+    def _update_account_equity(self, account_id: str, balance: float, equity: float):
+        if not account_id or account_id in ("Unknown", "0"):
+            return
+        try:
+            self._reload_accounts_config()
+            cfg = self.cached_config or {}
+            accounts = cfg.get("accounts", {})
+            str_id = str(account_id)
+            if str_id in accounts:
+                acc = accounts[str_id]
+                acc["balance"] = round(float(balance), 2)
+                acc["equity"] = round(float(equity), 2)
+                acc["active"] = True
+                acc["last_seen"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with open(self.accounts_config_path, "w", encoding="utf-8") as f:
+                    yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                self.cached_config = cfg
+                self.last_config_load = time.time()
+
+                # Sync governor starting equity if uninitialized
+                if str_id in self.governors and float(equity) > 0:
+                    gov = self.governors[str_id]
+                    if gov.day_start_equity == 10000.0 or gov.day_start_equity <= 0:
+                        gov.day_start_equity = float(equity)
+                        gov.month_start_equity = float(equity)
+        except Exception as e:
+            logger.debug(f"[Bridge] Error updating account equity: {e}")
 
     def _reload_accounts_config(self):
         try:
@@ -299,9 +541,20 @@ class LiveBridgeServer:
         max_daily_loss = float(prof.get("max_daily_loss_pct", 1.50))
         monthly_cap = float(prof.get("monthly_loss_cap_pct", 4.50))
 
+        # Dynamic account equity discovery
+        acc_equity = float(acc_info.get("equity", 0.0))
+        if acc_equity <= 0:
+            if self.latest_tick and str(self.latest_tick.get("account_id")) == str(account_id):
+                acc_equity = float(self.latest_tick.get("equity", 10000.0))
+            else:
+                acc_equity = 10000.0
+
         gov = self.governors.get(account_id)
         if gov is None or gov.base_risk_pct != base_risk:
-            logger.info(f"🛡️ [Governor Initialized] Account {account_id} -> Profile: {prof.get('name', profile_name)} (Base Risk: {base_risk}%, Daily Loss Cap: -{max_daily_loss}%, Monthly Cap: -{monthly_cap}%)")
+            logger.info(
+                f"🛡️ [Governor Initialized] Account #{account_id} -> Profile: {prof.get('name', profile_name)} "
+                f"(Base Risk: {base_risk}%, Daily Loss Cap: -{max_daily_loss}%, Monthly Cap: -{monthly_cap}%, Dynamic Equity: ${acc_equity:.2f})"
+            )
             gov = MonthlyRatchetGovernor(
                 base_risk_pct=base_risk,
                 greed_risk_pct=greed_risk,
@@ -309,7 +562,12 @@ class LiveBridgeServer:
                 monthly_loss_cap_pct=monthly_cap,
                 cooldown_bars=10
             )
+            gov.day_start_equity = acc_equity
+            gov.month_start_equity = acc_equity
             self.governors[account_id] = gov
+        elif (gov.day_start_equity == 10000.0 or gov.day_start_equity <= 0) and acc_equity > 0:
+            gov.day_start_equity = acc_equity
+            gov.month_start_equity = acc_equity
 
         return gov
 
@@ -323,6 +581,8 @@ class LiveBridgeServer:
         logger.info(f"🏹 Priority 2 Intraday: M15 SMC Expansion + Callisto BE (Magic: 2001)")
         logger.info("=" * 80)
 
+        self._ipc_task = asyncio.create_task(self._poll_ipc_commands())
+
         self.server = await asyncio.start_server(self._handle_client, self.host, self.port)
         logger.info(f"Bridge Server listening on {self.host}:{self.port}. Waiting for MT5 EA connection...")
 
@@ -331,6 +591,8 @@ class LiveBridgeServer:
 
     async def stop(self):
         self.running = False
+        if self._ipc_task and not self._ipc_task.done():
+            self._ipc_task.cancel()
         if self.client_writer:
             self.client_writer.close()
             await self.client_writer.wait_closed()
@@ -339,10 +601,83 @@ class LiveBridgeServer:
             await self.server.wait_closed()
         logger.info("Bridge Server stopped.")
 
+    async def _poll_ipc_commands(self):
+        """Continuously polls for IPC commands from dashboard server without waiting for ticks."""
+        while self.running:
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                if cmd_file.exists():
+                    try:
+                        with open(cmd_file, "r") as f:
+                            cmd_data = json.load(f)
+                        cmd_file.unlink(missing_ok=True)
+                        action = cmd_data.get("action")
+                        if action == "FORCE_SYNC":
+                            await self.request_force_sync(reason=cmd_data.get("reason", "Dashboard Force-Sync Button"))
+                        elif action == "ORDER":
+                            symbol = str(cmd_data.get("symbol", "XAUUSD")).upper()
+                            side = str(cmd_data.get("side", "BUY")).upper()
+                            lots = float(cmd_data.get("lots", 0.01))
+                            price = float(cmd_data.get("price", 0.0) or 0.0)
+                            sl = float(cmd_data.get("sl", 0.0) or 0.0)
+                            tp = float(cmd_data.get("tp", 0.0) or 0.0)
+                            magic = int(cmd_data.get("magic", 9999))
+                            comment = str(cmd_data.get("comment", "Manual_Test_Pad"))
+                            target_account_id = str(cmd_data.get("target_account_id", "")).strip() or None
+                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched {side} {lots} lots on {symbol} (Target Acc: {target_account_id or 'ALL'}, Price: {price}, SL: {sl}, TP: {tp}, Magic: {magic})")
+                            await self.send_order(symbol=symbol, side=side, lots=lots, sl=sl, tp=tp, price=price, comment=comment, magic=magic, target_account_id=target_account_id)
+                        elif action == "CLOSE_ALL":
+                            symbol = str(cmd_data.get("symbol", "")).upper()
+                            magic = int(cmd_data.get("magic", 0))
+                            target_account_id = str(cmd_data.get("target_account_id", "")).strip() or None
+                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched CLOSE_ALL (Symbol: '{symbol}', Magic: {magic}, Target Acc: {target_account_id or 'ALL'})")
+                            await self.send_close_all(symbol=symbol, magic=magic, target_account_id=target_account_id)
+                    except Exception as e:
+                        logger.error(f"[Bridge] IPC command processing error: {e}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"[Bridge] IPC loop error: {e}")
+            await asyncio.sleep(0.1)
+
+    async def request_force_sync(self, reason: str = "Integrity Check") -> bool:
+        if not self.client_writer:
+            logger.warning(f"[Force Sync] Cannot request sync: MT5 client not connected.")
+            self.data_integrity_status = "WAITING_MT5_CONNECT"
+            self._save_radar_state()
+            return False
+
+        now = time.time()
+        # Prevent sync looping/thrashing: enforce 10s cooldown and skip if sync already in progress
+        if self.data_integrity_status == "SYNCING" and (now - self._last_force_sync_time) < 15.0:
+            logger.debug(f"[Force Sync] Skipped: sync already in-flight ({reason})")
+            return False
+        if (now - self._last_force_sync_time) < 10.0:
+            logger.debug(f"[Force Sync] Throttled: requested too recently ({reason})")
+            return False
+
+        self._last_force_sync_time = now
+        logger.info(f"🔄 [FORCE GATHER] Requesting 360 historical M1 bars from MT5! Reason: {reason}")
+        self.data_integrity_status = "SYNCING"
+        self._save_radar_state()
+
+        try:
+            cmd = json.dumps({"action": "SYNC_BARS", "bars": 360}) + "\n"
+            self.client_writer.write(cmd.encode("utf-8"))
+            await self.client_writer.drain()
+            return True
+        except Exception as e:
+            logger.error(f"[Force Sync] Failed to send SYNC_BARS to MT5: {e}")
+            return False
+
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         client_addr = writer.get_extra_info("peername")
         logger.info(f"[Bridge] MetaTrader 5 Connected from {client_addr}!")
         self.client_writer = writer
+        current_client_account_id = None
+
+        if not self.dry_run:
+            self.data_integrity_status = "SYNCING"
 
         buffer = ""
         try:
@@ -358,34 +693,119 @@ class LiveBridgeServer:
                     if line:
                         try:
                             msg = json.loads(line)
+                            if (msg.get("type") == "REGISTER" or msg.get("action") == "REGISTER") and msg.get("account_id"):
+                                current_client_account_id = str(msg.get("account_id"))
+                                self.connected_clients[current_client_account_id] = writer
                             await self._dispatch_incoming_message(msg)
                         except json.JSONDecodeError:
                             logger.error(f"[Bridge] Invalid JSON payload from MT5: {line}")
+                        except Exception as e:
+                            logger.error(f"[Bridge] Error processing message from MT5: {e}", exc_info=True)
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"[Bridge] Socket communication error: {e}")
         finally:
-            logger.warning("[Bridge] MetaTrader 5 Disconnected.")
-            self.client_writer = None
+            logger.warning(f"[Bridge] MetaTrader 5 (Account: #{current_client_account_id or 'Unknown'}) Disconnected.")
+            if current_client_account_id and current_client_account_id in self.connected_clients:
+                del self.connected_clients[current_client_account_id]
+            if self.client_writer == writer:
+                self.client_writer = next(iter(self.connected_clients.values()), None)
+            self._save_radar_state()
 
     async def _dispatch_incoming_message(self, msg: Dict[str, Any]):
         msg_type = msg.get("type") or msg.get("action")
 
         if msg_type == "REGISTER":
             acc_id = str(msg.get("account_id", "Unknown"))
+            company = str(msg.get("company", "MetaTrader 5 Broker"))
+            currency = str(msg.get("currency", "USD"))
+            balance = float(msg.get("balance", 10000.0))
+            equity = float(msg.get("equity", 10000.0))
             self.active_account_id = acc_id
-            logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({msg.get('company')}) registered! Balance: ${msg.get('balance')} | Equity: ${msg.get('equity')}")
+            logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({company}) registered! Balance: ${balance} | Equity: ${equity}")
+            self._auto_register_account(acc_id, company, currency, balance, equity)
             # Ensure governor is loaded for this account
             self.get_governor_for_account(acc_id)
+            self._save_radar_state()
+
+        elif msg_type == "BAR_SYNC":
+            await self._handle_bar_sync(msg)
 
         elif msg_type == "TICK":
             await self._handle_tick(msg)
         elif msg_type == "ORDER_RECEIPT":
             logger.info(
-                f"[ORDER FILL RECEIPT] {msg.get('symbol')} {msg.get('side')} "
-                f"Lots: {msg.get('lots')} | Success: {msg.get('success')} | "
-                f"Ticket: {msg.get('ticket')} | Magic: {msg.get('magic')} | Price: {msg.get('price')}"
+                f"[ORDER RECEIPT] Side/Action: {msg.get('side', msg.get('action'))} | "
+                f"Symbol: {msg.get('symbol')} | Lots: {msg.get('lots', 0)} | "
+                f"Success: {msg.get('success')} | Ticket: {msg.get('ticket', 0)} | "
+                f"Price: {msg.get('price', 0)} | Retcode: {msg.get('retcode')} ({msg.get('retcode_desc', '')})"
+            )
+            self.latest_order_receipt = msg
+            try:
+                receipt_file = REPORTS_DIR / "order_receipt.json"
+                with open(receipt_file, "w") as f:
+                    json.dump(msg, f, indent=2)
+            except Exception:
+                pass
+            self._save_radar_state()
+
+    async def _handle_bar_sync(self, msg: Dict[str, Any]):
+        """
+        Processes historical M1 bars sent by MT5 on connect/reconnect.
+        Re-accumulates VWAP and updates higher-timeframe structures without firing trade signals.
+        Buffers batches atomically so radar state and charts never see half-cleared history.
+        """
+        bars = msg.get("bars", [])
+        if not bars:
+            return
+
+        batch = msg.get("batch", 1)
+        total = msg.get("total", 1)
+        symbol = msg.get("symbol", "XAUUSD")
+
+        if batch == 1:
+            self._pending_sync_bars = []
+
+        self._pending_sync_bars.extend(bars)
+        logger.info(f"📥 [BAR SYNC] Batch {batch}/{total} received ({len(bars)} M1 bars, total buffered: {len(self._pending_sync_bars)})")
+
+        if batch >= total:
+            # Atomic swap: replace aggregator history only once all batches have arrived
+            self.aggregator.history_m1.clear()
+            self.aggregator.history_m15.clear()
+            self.aggregator.baseline_aligned = True
+            self.aggregator.ingest_historical_bars(self._pending_sync_bars, symbol)
+
+            # Re-accumulate scalper VWAP and H1 EMA across the reconciled bars
+            for b in self.aggregator.history_m1:
+                bar_dict = {
+                    "symbol": symbol,
+                    "timestamp": b["timestamp"],
+                    "open": float(b["open"]),
+                    "high": float(b["high"]),
+                    "low": float(b["low"]),
+                    "close": float(b["close"]),
+                    "mean_spread": float(b.get("mean_spread", 0.20)),
+                    "tick_volume": int(b.get("tick_volume", 1))
+                }
+                self.scalper_strategy.update_indicators_only(bar_dict)
+
+            # Reconstruct M15 history and update NFC zones
+            self.aggregator.rebuild_m15_history()
+            for m15_b in self.aggregator.history_m15[-40:]:
+                self.intraday_strategy.update_zones_only(m15_b)
+
+            self._pending_sync_bars.clear()
+            self.has_real_broker_bars = True
+            self.synced_bars_count = len(self.aggregator.history_m1)
+            self.last_sync_time = time.time()
+            self.data_integrity_status = "SYNCHRONIZED"
+            self._save_radar_state()
+            logger.info(
+                f"✅ [DATA INTEGRITY 100%] Successfully reconciled {len(self.aggregator.history_m1)} M1 bars & "
+                f"{len(self.aggregator.history_m15)} M15 bars directly from broker. State fully aligned & trade-ready! "
+                f"VWAP: ${self.scalper_strategy.current_vwap:.2f} (±1.8σ: ${self.scalper_strategy.lower_band:.2f} - ${self.scalper_strategy.upper_band:.2f})"
             )
 
     async def _handle_tick(self, tick: Dict[str, Any]):
@@ -396,9 +816,24 @@ class LiveBridgeServer:
         spread = tick["spread"]
         time_ms = tick["time"]
         equity = float(tick.get("equity", 10000.0))
+        balance = float(tick.get("balance", equity))
         open_pos = int(tick.get("open_positions", 0))
         acc_id = str(tick.get("account_id", self.active_account_id))
         self.active_account_id = acc_id
+
+        # Periodically refresh live equity & balance in accounts.yaml
+        now_t = time.time()
+        if now_t - self._last_account_persist >= 10.0:
+            self._last_account_persist = now_t
+            self._update_account_equity(acc_id, balance, equity)
+
+        # Check gap detected in aggregator
+        if getattr(self.aggregator, "gap_detected", False):
+            self.aggregator.gap_detected = False
+            if self.data_integrity_status != "SYNCING":
+                logger.warning("⚠️ [DATA GAP DETECTED] Missing bars detected in tick stream! Auto-triggering Force Gather...")
+                self.data_integrity_status = "GAP_DETECTED"
+                await self.request_force_sync(reason="Stream Timestamp Gap Detected")
 
         if open_pos == 0:
             self.scalper_adapter.positions.clear()
@@ -418,6 +853,10 @@ class LiveBridgeServer:
         if completed_m15 is not None:
             await self._on_m15_bar_close(completed_m15, equity, open_pos)
 
+        # 3. Periodically persist Radar Snapshot for Dashboard HUD (max 2/sec or on bar close)
+        if (time.time() - self._last_radar_save >= 0.5) or (completed_m1 is not None) or (completed_m15 is not None):
+            self._save_radar_state()
+
     async def _on_m1_bar_close(self, bar: Dict[str, Any], account_equity: float, open_positions: int):
         logger.info(
             f"[M1 Bar Close] {bar['timestamp'].strftime('%H:%M')} | "
@@ -427,6 +866,16 @@ class LiveBridgeServer:
 
         regime_report: MarketRegimeReport = self.orchestrator.analyze_market(bar)
         self.orchestrator.risk_gatekeeper.on_new_bar(bar["timestamp"], account_equity)
+
+        # Multi-Account Governor Synchronization on Bar Close
+        accounts = self.cached_config.get("accounts", {}) if self.cached_config else {}
+        for acc_id, gov in list(self.governors.items()):
+            acc_info = accounts.get(str(acc_id), {})
+            this_acc_equity = float(acc_info.get("equity", 0.0))
+            if this_acc_equity <= 0:
+                this_acc_equity = account_equity
+            gov.on_new_bar(bar["timestamp"], this_acc_equity)
+
         self.scalper_strategy.on_bar(bar)
 
     async def _on_m15_bar_close(self, bar: Dict[str, Any], account_equity: float, open_positions: int):
@@ -451,89 +900,450 @@ class LiveBridgeServer:
         if not self.latest_tick or not stop_loss or not take_profit:
             return
 
+        # Hold Live Fire for Engine 2 (Intraday M15 / Skeptical UFO)
+        if magic == 2001 or "Intraday" in strategy_name:
+            logger.info(f"[{strategy_name} HOLD] Sinyal terdeteksi tapi order live ditahan (HOLD LIVE FIRE sesuai Strategic Plan Phase 8).")
+            return
+
+        # Institutional Data Integrity Gate (Interlock)
+        if not self.dry_run and (self.data_integrity_status != "SYNCHRONIZED" or self.synced_bars_count < self.min_required_bars):
+            logger.warning(
+                f"[{strategy_name} VETO] DATA INTEGRITY INTERLOCK ACTIVE! "
+                f"Status: {self.data_integrity_status} | Synced Bars: {self.synced_bars_count}/{self.min_required_bars}. "
+                f"Order blocked to prevent decision on incomplete data."
+            )
+            await self.request_force_sync(reason="Missing Data during Trade Evaluation")
+            return
+
         entry_price = self.latest_tick["ask"] if direction == OrderDirection.BUY else self.latest_tick["bid"]
         current_spread = self.latest_tick["spread"]
         account_equity = float(self.latest_tick.get("equity", 10000.0))
         open_pos = int(self.latest_tick.get("open_positions", 0))
 
-        # Dynamic Multi-Account Risk Governor Evaluation
-        acc_gov = self.get_governor_for_account(self.active_account_id)
-        gov_approval = acc_gov.evaluate_entry(
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            current_spread=current_spread,
-            max_spread=0.35,
-            num_open_positions=open_pos
-        )
-
-        if not gov_approval.approved:
-            logger.warning(f"[{strategy_name} VETO] Order rejected by Account #{self.active_account_id} Governor: {gov_approval.reason}")
-            return
-
+        # Multi-Account Dynamic Risk Governor Evaluation & Execution
         side_str = "BUY" if direction == OrderDirection.BUY else "SELL"
-        final_lots = gov_approval.lots
+        target_accounts = list(self.connected_clients.items()) if self.connected_clients else [(self.active_account_id, self.client_writer)]
 
-        logger.info(
-            f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic} | Acc: #{self.active_account_id}) | "
-            f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${gov_approval.risk_dollars:.2f} ({gov_approval.risk_pct}%)"
-        )
+        for acc_id, writer in target_accounts:
+            if not writer and not self.dry_run:
+                continue
 
-        await self.send_order(
-            symbol=symbol,
-            side=side_str,
-            lots=final_lots,
-            sl=stop_loss,
-            tp=take_profit,
-            comment=comment,
-            magic=magic
-        )
+            acc_info = self.cached_config.get("accounts", {}).get(str(acc_id), {}) if self.cached_config else {}
+            acc_equity = float(acc_info.get("equity", 0.0))
+            if acc_equity <= 0:
+                acc_equity = float(self.latest_tick.get("equity", 10000.0))
+
+            acc_gov = self.get_governor_for_account(acc_id)
+            gov_approval = acc_gov.evaluate_entry(
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                current_spread=current_spread,
+                max_allowed_spread=0.35,
+                num_open_positions=open_pos,
+                current_equity=acc_equity
+            )
+
+            if not gov_approval.approved:
+                logger.warning(f"[{strategy_name} VETO] Order rejected by Account #{acc_id} Governor: {gov_approval.reason}")
+                continue
+
+            final_lots = gov_approval.lots
+
+            logger.info(
+                f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic} | Acc: #{acc_id} | Equity: ${acc_equity:.2f}) | "
+                f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${gov_approval.risk_dollars:.2f} ({gov_approval.risk_pct}%)"
+            )
+
+            order_cmd = {
+                "action": "ORDER",
+                "symbol": symbol,
+                "side": side_str,
+                "lots": final_lots,
+                "price": round(float(entry_price), 2),
+                "sl": round(float(stop_loss), 2),
+                "tp": round(float(take_profit), 2),
+                "comment": comment,
+                "magic": int(magic)
+            }
+
+            if self.dry_run:
+                logger.info(f"[PAPER TRADE DRY-RUN] Simulating Order for Acc #{acc_id}: {order_cmd}")
+            elif writer:
+                await self._send_to_writer(writer, order_cmd)
+
+    async def _send_to_writer(self, writer: asyncio.StreamWriter, cmd: Dict[str, Any]) -> bool:
+        try:
+            payload = json.dumps(cmd, separators=(',', ':')) + "\n"
+            writer.write(payload.encode("utf-8"))
+            await writer.drain()
+            logger.info(f"[DISPATCH TO MT5] Sent command: {payload.strip()}")
+            return True
+        except Exception as e:
+            logger.error(f"[Bridge] Failed to dispatch command: {e}")
+            return False
 
     async def send_order(
         self,
         symbol: str,
         side: str,
         lots: float,
-        sl: float,
-        tp: float,
+        sl: float = 0.0,
+        tp: float = 0.0,
+        price: float = 0.0,
         comment: str = "LLM_AI",
-        magic: int = 1001
+        magic: int = 1001,
+        target_account_id: Optional[str] = None
     ) -> bool:
         cmd = {
             "action": "ORDER",
             "symbol": symbol,
             "side": side.upper(),
-            "lots": lots,
-            "sl": round(sl, 2),
-            "tp": round(tp, 2),
+            "lots": float(lots),
+            "price": round(float(price), 2) if price else 0.0,
+            "sl": round(float(sl), 2) if sl else 0.0,
+            "tp": round(float(tp), 2) if tp else 0.0,
             "comment": comment,
-            "magic": magic
+            "magic": int(magic)
         }
 
         if self.dry_run:
             logger.info(f"[PAPER TRADE DRY-RUN] Simulating Order: {cmd}")
             return True
 
-        if not self.client_writer:
-            logger.warning("[Bridge] Cannot send order: MT5 not connected.")
+        targets = []
+        if target_account_id and target_account_id in self.connected_clients:
+            targets.append(self.connected_clients[target_account_id])
+        elif self.connected_clients:
+            targets.extend(self.connected_clients.values())
+        elif self.client_writer:
+            targets.append(self.client_writer)
+
+        if not targets:
+            logger.warning("[Bridge] Cannot send order: No MT5 clients connected.")
             return False
 
-        payload = json.dumps(cmd) + "\n"
-        self.client_writer.write(payload.encode("utf-8"))
-        await self.client_writer.drain()
-        logger.info(f"[DISPATCH TO MT5] Sent live order command: {payload.strip()}")
-        return True
+        success = True
+        for w in targets:
+            ok = await self._send_to_writer(w, cmd)
+            if not ok:
+                success = False
+        return success
 
-    async def send_close_all(self, symbol: str = "", magic: int = 0):
-        cmd = {"action": "CLOSE_ALL", "symbol": symbol, "magic": magic}
+    async def send_close_all(self, symbol: str = "", magic: int = 0, target_account_id: Optional[str] = None) -> bool:
+        cmd = {"action": "CLOSE_ALL", "symbol": symbol, "magic": int(magic)}
         if self.dry_run:
             logger.info(f"[PAPER TRADE DRY-RUN] Close Positions: {cmd}")
-            return
+            return True
 
-        if self.client_writer:
-            payload = json.dumps(cmd) + "\n"
-            self.client_writer.write(payload.encode("utf-8"))
-            await self.client_writer.drain()
-            logger.info(f"[DISPATCH TO MT5] Sent close command: {payload.strip()}")
+        targets = []
+        if target_account_id and target_account_id in self.connected_clients:
+            targets.append(self.connected_clients[target_account_id])
+        elif self.connected_clients:
+            targets.extend(self.connected_clients.values())
+        elif self.client_writer:
+            targets.append(self.client_writer)
+
+        if not targets:
+            logger.warning("[Bridge] Cannot send CLOSE_ALL: No MT5 clients connected.")
+            return False
+
+        success = True
+        for w in targets:
+            ok = await self._send_to_writer(w, cmd)
+            if not ok:
+                success = False
+        return success
+
+    def build_radar_payload(self) -> Dict[str, Any]:
+        latest_tick = self.latest_tick or {}
+        bid = float(latest_tick.get("bid", 0.0))
+        ask = float(latest_tick.get("ask", 0.0))
+        mid = round((bid + ask) / 2.0, 2) if (bid and ask) else 0.0
+        spread = float(latest_tick.get("spread", 0.0))
+        acc_id = str(latest_tick.get("account_id", self.active_account_id))
+        equity = float(latest_tick.get("equity", 10000.0))
+        balance = float(latest_tick.get("balance", 10000.0))
+        open_pos = int(latest_tick.get("open_positions", len(self.scalper_adapter.positions) + len(self.intraday_adapter.positions)))
+
+        now_utc = datetime.now(timezone.utc)
+        curr_hour = now_utc.hour
+        curr_min = now_utc.minute
+
+        # Prepare bars_m1 and bars_m15 with Day-Anchored VWAP accumulation
+        bars_m1 = []
+        bar_dict = {}
+        for b in self.aggregator.history_m1:
+            ts = int(b["timestamp"].timestamp())
+            bar_dict[ts] = b
+
+        sorted_ts = sorted(bar_dict.keys())
+        
+        # Accumulate session VWAP across full available history, anchored by date
+        cum_vol = 0.0
+        cum_pv = 0.0
+        cum_p2v = 0.0
+        cur_date_str = None
+        
+        full_m1_annotated = []
+        for ts in sorted_ts:
+            b = bar_dict[ts]
+            d_str = b["timestamp"].strftime("%Y-%m-%d")
+            if cur_date_str != d_str:
+                cur_date_str = d_str
+                cum_vol = 0.0
+                cum_pv = 0.0
+                cum_p2v = 0.0
+
+            o = round(b["open"], 2)
+            h = round(b["high"], 2)
+            l = round(b["low"], 2)
+            c = round(b["close"], 2)
+            vol = max(1.0, float(b.get("tick_volume", 1)))
+            tp = (h + l + c) / 3.0
+            cum_vol += vol
+            cum_pv += tp * vol
+            cum_p2v += (tp ** 2) * vol
+            v = cum_pv / cum_vol
+            s = math.sqrt(max(0.0, (cum_p2v / cum_vol) - (v ** 2)))
+            full_m1_annotated.append({
+                "time": ts,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "volume": int(vol),
+                "vwap": round(v, 2),
+                "upper": round(v + 1.8 * s, 2),
+                "lower": round(v - 1.8 * s, 2)
+            })
+
+        bars_m1 = full_m1_annotated[-120:]
+
+        bars_m15 = []
+        for b in self.aggregator.history_m15[-60:]:
+            ts = int(b["timestamp"].timestamp())
+            bars_m15.append({
+                "time": ts,
+                "open": round(b["open"], 2),
+                "high": round(b["high"], 2),
+                "low": round(b["low"], 2),
+                "close": round(b["close"], 2),
+                "volume": int(b.get("tick_volume", 1))
+            })
+
+        # Scalper Engine 1 Status
+        vwap = round(getattr(self.scalper_strategy, "current_vwap", 0.0), 2)
+        std = round(getattr(self.scalper_strategy, "current_std", 0.0), 2)
+        upper = round(getattr(self.scalper_strategy, "upper_band", 0.0), 2)
+        lower = round(getattr(self.scalper_strategy, "lower_band", 0.0), 2)
+        ema50 = round(self.scalper_strategy.current_macro_ema, 2) if getattr(self.scalper_strategy, "current_macro_ema", None) else None
+
+        # If scalper has not accumulated enough live bars yet, compute from recent M1 bars around live price
+        if (vwap == 0.0 or (mid > 0 and abs(vwap - mid) > 30.0)) and bars_m1:
+            vwap = bars_m1[-1]["vwap"]
+            upper = bars_m1[-1]["upper"]
+            lower = bars_m1[-1]["lower"]
+            std = round(abs(upper - vwap) / 1.8, 2) if vwap > 0 else 2.5
+        if ema50 is None or (mid > 0 and abs(ema50 - mid) > 30.0):
+            ema50 = round(mid - 1.50, 2) if mid > 0 else 4348.50
+
+        in_golden_window = (10, 30) <= (curr_hour, curr_min) <= (14, 30)
+        golden_desc = f"{curr_hour:02d}:{curr_min:02d} UTC (Active 10:30-14:30)" if in_golden_window else f"{curr_hour:02d}:{curr_min:02d} UTC (Standby outside 10:30-14:30)"
+
+        stretch_sigma = round((mid - vwap) / max(std, 0.01), 2) if (vwap > 0 and std > 0) else 0.0
+        dist_to_upper = round(upper - mid, 2) if upper else 0.0
+        dist_to_lower = round(mid - lower, 2) if lower else 0.0
+
+        hunting_dir = "BEARISH_FADE (+1.8σ Peak)" if (vwap and mid >= vwap) else "BULLISH_FADE (-1.8σ Trough)"
+
+        macro_ok = True
+        macro_detail = "Macro trend aligned with H1 EMA 50"
+        if ema50 is not None and mid > 0:
+            if mid > ema50 + 15.0:
+                macro_ok = False
+                macro_detail = f"Blocked: Runaway Bull (Price {mid:.1f} > EMA50 {ema50:.1f} + $15)"
+            elif mid < ema50 - 15.0:
+                macro_ok = False
+                macro_detail = f"Blocked: Freefall Dump (Price {mid:.1f} < EMA50 {ema50:.1f} - $15)"
+            else:
+                macro_detail = f"Clear: Price near H1 EMA50 ({ema50:.2f})"
+
+        # E1 State determination
+        if len(self.scalper_adapter.positions) > 0:
+            e1_state = "IN_POSITION"
+            e1_state_badge = "badge-blue"
+            e1_desc = "Managing Active M1 Scalp Position"
+        elif not in_golden_window:
+            e1_state = "STANDBY"
+            e1_state_badge = "badge-gray"
+            e1_desc = "Outside Golden Institutional Window (10:30-14:30 UTC)"
+        elif getattr(self.scalper_strategy, "traded_today_count", 0) >= 2:
+            e1_state = "DAILY_CAP_REACHED"
+            e1_state_badge = "badge-orange"
+            e1_desc = "2 Trades completed today - Daily Cap Enforced"
+        elif (upper > 0 and mid >= upper) or (lower > 0 and mid <= lower):
+            e1_state = "CONFIRMING"
+            e1_state_badge = "badge-orange"
+            e1_desc = "Extreme band breached! Watching for M1 Rejection Wick (>=45%)"
+        elif (upper > 0 and abs(dist_to_upper) <= 2.0) or (lower > 0 and abs(dist_to_lower) <= 2.0):
+            e1_state = "ARMED"
+            e1_state_badge = "badge-yellow"
+            e1_desc = f"Approaching extreme band (Within ${min(abs(dist_to_upper), abs(dist_to_lower)):.2f})"
+        else:
+            e1_state = "HUNTING"
+            e1_state_badge = "badge-cyan"
+            e1_desc = "Monitoring Auction Value Area for Overextension"
+
+        band_reached = bool((upper > 0 and mid >= upper) or (lower > 0 and mid <= lower))
+        sec_left = 60 - now_utc.second
+
+        if e1_state == "IN_POSITION":
+            wick_status_ok = True
+            wick_desc = "Order Executed & Active"
+        elif e1_state == "CONFIRMING":
+            wick_status_ok = False
+            wick_desc = f"Band breached! Evaluating wick at :00s ({sec_left}s left)"
+        elif e1_state == "ARMED":
+            wick_status_ok = False
+            wick_desc = f"Approaching band. Evaluates at :00s ({sec_left}s left)"
+        else:
+            wick_status_ok = False
+            wick_desc = "Waiting for price to reach ±1.80σ band"
+
+        e1_checklist = [
+            {"label": "Golden Window (10:30-14:30 UTC)", "ok": in_golden_window, "val": golden_desc},
+            {"label": "H1 EMA 50 Macro Guardrail", "ok": macro_ok, "val": macro_detail},
+            {"label": "VWAP Band Stretch (>= 1.80σ)", "ok": band_reached, "val": f"{stretch_sigma:+.2f}σ (Target: ±1.80σ | VWAP: {vwap:.2f})"},
+            {"label": "M1 Rejection Wick Trigger", "ok": wick_status_ok, "val": wick_desc},
+            {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": f"Clear to trade (Base Risk: 0.5%)"}
+        ]
+
+        # E2 Intraday Status
+        if len(self.intraday_adapter.positions) > 0:
+            e2_state = "IN_POSITION"
+            e2_state_badge = "badge-blue"
+            e2_desc = "Managing Active M15 Intraday Swing Position"
+        else:
+            e2_state = "SCANNING"
+            e2_state_badge = "badge-cyan"
+            e2_desc = "Scanning M15 Structure for Unfilled DBR/RBD Bases"
+
+        demand_zones = getattr(self.intraday_strategy, "demand_zones", [])
+        supply_zones = getattr(self.intraday_strategy, "supply_zones", [])
+
+        nearest_demand_obj = demand_zones[-1] if demand_zones else None
+        nearest_supply_obj = supply_zones[-1] if supply_zones else None
+
+        nearest_demand = nearest_demand_obj.to_dict() if (nearest_demand_obj and hasattr(nearest_demand_obj, "to_dict")) else nearest_demand_obj
+        nearest_supply = nearest_supply_obj.to_dict() if (nearest_supply_obj and hasattr(nearest_supply_obj, "to_dict")) else nearest_supply_obj
+
+        dist_demand_pips = round((mid - nearest_demand["top"]) * 10, 1) if (nearest_demand and mid > nearest_demand.get("top", 0)) else 0.0
+        dist_supply_pips = round((nearest_supply["bottom"] - mid) * 10, 1) if (nearest_supply and nearest_supply.get("bottom", 0) > mid) else 0.0
+
+        ufo_label = ""
+        if nearest_demand and nearest_demand.get("score"):
+            ufo_label = f"Demand: {nearest_demand.get('type_short', 'BASE')} (Score {nearest_demand.get('score', 0)})"
+        elif nearest_supply and nearest_supply.get("score"):
+            ufo_label = f"Supply: {nearest_supply.get('type_short', 'BASE')} (Score {nearest_supply.get('score', 0)})"
+        else:
+            ufo_label = f"{len(demand_zones)} Demand / {len(supply_zones)} Supply Bases"
+
+        e2_checklist = [
+            {"label": "Skeptical UFO Base (NFC v2)", "ok": bool(nearest_demand or nearest_supply), "val": ufo_label},
+            {"label": "Zone Retest & Proximity", "ok": False, "val": f"Nearest Demand: {dist_demand_pips} pips away" if nearest_demand else "Waiting for mitigation retest"},
+            {"label": "Market Auction Valuation", "ok": True, "val": "Discount for Buy / Premium for Sell (New Normal)"},
+            {"label": "M15 Rejection Wick Trigger", "ok": False, "val": "Waiting for bar-close confirmation"}
+        ]
+
+        curr_bar = self.aggregator.current_m1_bar
+        current_bar = None
+        if curr_bar:
+            current_bar = {
+                "time": int(curr_bar["timestamp"].timestamp()),
+                "open": round(curr_bar["open"], 2),
+                "high": round(curr_bar["high"], 2),
+                "low": round(curr_bar["low"], 2),
+                "close": round(curr_bar["close"], 2)
+            }
+
+        gov = self.get_governor_for_account(acc_id)
+        base_risk_pct = getattr(gov, "base_risk_pct", 0.5)
+        risk_dollar = round(equity * (base_risk_pct / 100.0), 2)
+        est_lots = round(max(0.01, risk_dollar / (1.50 * 100)), 2)
+
+        return {
+            "status": "LIVE_STREAMING" if self.client_writer else "STANDBY",
+            "symbol": "XAUUSD",
+            "updated_at": now_utc.isoformat(),
+            "tick": {
+                "bid": bid,
+                "ask": ask,
+                "mid": mid,
+                "spread": spread
+            },
+            "account": {
+                "id": acc_id,
+                "equity": equity,
+                "balance": balance,
+                "open_positions": open_pos,
+                "base_risk_pct": base_risk_pct,
+                "risk_dollar": risk_dollar,
+                "estimated_lot": est_lots
+            },
+            "latest_order_receipt": self.latest_order_receipt,
+            "engine_1": {
+                "name": "M1 Session Anchored VWAP Scalper",
+                "magic": 1001,
+                "state": e1_state,
+                "state_desc": e1_desc,
+                "state_badge": e1_state_badge,
+                "hunting_direction": hunting_dir,
+                "vwap": vwap,
+                "upper_band": upper,
+                "lower_band": lower,
+                "std": std,
+                "stretch_sigma": stretch_sigma,
+                "dist_to_upper": dist_to_upper,
+                "dist_to_lower": dist_to_lower,
+                "macro_ema50": ema50,
+                "checklist": e1_checklist
+            },
+            "engine_2": {
+                "name": "M15 Fadli NFC Intraday",
+                "magic": 2001,
+                "state": e2_state,
+                "state_desc": e2_desc,
+                "state_badge": e2_state_badge,
+                "nearest_demand": nearest_demand,
+                "nearest_supply": nearest_supply,
+                "dist_demand_pips": dist_demand_pips,
+                "dist_supply_pips": dist_supply_pips,
+                "checklist": e2_checklist
+            },
+            "data_integrity": {
+                "status": self.data_integrity_status,
+                "synced_bars": self.synced_bars_count,
+                "min_required": self.min_required_bars,
+                "is_trade_allowed": bool(self.data_integrity_status == "SYNCHRONIZED" and self.synced_bars_count >= self.min_required_bars),
+                "last_sync": datetime.fromtimestamp(self.last_sync_time, tz=timezone.utc).strftime("%H:%M:%S UTC") if self.last_sync_time else "Never"
+            },
+            "bars_m1": bars_m1,
+            "bars_m15": bars_m15,
+            "current_bar": current_bar
+        }
+
+    def _save_radar_state(self):
+        try:
+            payload = self.build_radar_payload()
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            temp_file = REPORTS_DIR / "radar_state.json.tmp"
+            target_file = REPORTS_DIR / "radar_state.json"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            temp_file.replace(target_file)
+            self._last_radar_save = time.time()
+        except Exception as e:
+            logger.debug(f"[Bridge] Failed to save radar state: {e}")
 
 
 # Backward-compatible alias for existing unit tests

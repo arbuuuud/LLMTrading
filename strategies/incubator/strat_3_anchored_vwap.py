@@ -120,6 +120,46 @@ class SessionAnchoredVWAPStrategy(BaseStrategy):
     def on_trade_closed(self, trade_record):
         self.governor.on_trade_closed(trade_record.net_pnl)
 
+    def update_indicators_only(self, bar: Dict[str, Any]):
+        """
+        Updates Macro H1 EMA, VWAP, variance, and standard deviation bands
+        without evaluating trade entry triggers or advancing trade-hold timers.
+        Used for Historical Catch-Up Sync on reconnect.
+        """
+        dt: datetime = bar["timestamp"]
+        d = dt.date()
+
+        gh = bar["high"]
+        gl = bar["low"]
+        gc = bar["close"]
+        vol = max(1.0, float(bar.get("tick_volume", 1)))
+
+        # Update Macro H1 EMA
+        self._update_macro_h1(bar)
+
+        # Reset accumulators on new trading day
+        if self.current_date != d:
+            self.current_date = d
+            self.cum_vol = 0.0
+            self.cum_pv = 0.0
+            self.cum_p2v = 0.0
+            self.bars_in_trade = 0
+            self.traded_today_count = 0
+
+        # Typical Price = (High + Low + Close) / 3
+        tp_price = (gh + gl + gc) / 3.0
+        self.cum_vol += vol
+        self.cum_pv += tp_price * vol
+        self.cum_p2v += (tp_price ** 2) * vol
+
+        # Compute VWAP and Variance
+        self.current_vwap = self.cum_pv / self.cum_vol
+        variance = max(0.0, (self.cum_p2v / self.cum_vol) - (self.current_vwap ** 2))
+        self.current_std = math.sqrt(variance)
+
+        self.upper_band = self.current_vwap + (self.current_std * self.band_multiplier)
+        self.lower_band = self.current_vwap - (self.current_std * self.band_multiplier)
+
     def on_bar(self, bar: Dict[str, Any]):
         dt: datetime = bar["timestamp"]
         d = dt.date()

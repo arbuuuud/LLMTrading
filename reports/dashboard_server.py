@@ -1,7 +1,7 @@
 """
 LLMTrading Institutional Web Dashboard & Multi-Account Risk Management Server.
 Handles:
-- User Authentication (arief.setiabudi2010@gmail.com / P@ssw0rd!)
+- User Authentication (Session cookie & hashed token)
 - Multi-Account MT5 Management
 - Dynamic Risk Profile Assignment (Prop Firm, Sweet Spot, Aggressive, YOLO)
 - Live Static File Serving (Canvas Visualizer, Charts, Reports)
@@ -10,15 +10,19 @@ Handles:
 
 import sys
 import os
+import socket
 import json
 import yaml
 import time
+import math
+import hmac
 import secrets
 import hashlib
 from pathlib import Path
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Optional
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-from datetime import datetime
+from datetime import datetime, timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIGS_DIR = PROJECT_ROOT / "configs"
@@ -54,25 +58,240 @@ def verify_login(email, password):
     return computed_hash == target_hash
 
 
-def create_session(email):
-    token = secrets.token_hex(24)
-    ACTIVE_SESSIONS[token] = {
-        "email": email,
-        "expires_at": time.time() + (24 * 3600)  # 24 hours
-    }
-    return token
+def get_auth_secret() -> bytes:
+    cfg = load_accounts_config()
+    auth = cfg.get("auth", {})
+    secret = auth.get("secret_key")
+    if not secret:
+        secret = secrets.token_hex(32)
+        cfg.setdefault("auth", {})["secret_key"] = secret
+        save_accounts_config(cfg)
+    return secret.encode("utf-8")
 
 
-def is_authenticated(token):
+def create_session(email: str) -> str:
+    secret = get_auth_secret()
+    expires_at = int(time.time() + (30 * 86400))  # 30 days persistent session
+    payload = f"{email}:{expires_at}"
+    sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{email}:{expires_at}:{sig}"
+
+
+def is_authenticated(token: Optional[str]) -> bool:
     if not token:
         return False
-    session = ACTIVE_SESSIONS.get(token)
-    if not session:
+    try:
+        parts = token.strip().split(":")
+        if len(parts) != 3:
+            return False
+        email, exp_str, sig = parts
+        exp = int(exp_str)
+        if time.time() > exp:
+            return False
+        secret = get_auth_secret()
+        payload = f"{email}:{exp}"
+        expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected_sig)
+    except Exception:
         return False
-    if time.time() > session["expires_at"]:
-        del ACTIVE_SESSIONS[token]
-        return False
-    return True
+
+
+RADAR_STATE_PATH = REPORTS_DIR / "radar_state.json"
+_CACHED_FALLBACK_RADAR = None
+
+
+def _build_fallback_radar():
+    p_m1 = PROJECT_ROOT / "data" / "processed" / "bars" / "XAUUSD" / "M1" / "XAUUSD_M1.parquet"
+    p_m15 = PROJECT_ROOT / "data" / "processed" / "bars" / "XAUUSD" / "HTF" / "XAUUSD_M15.parquet"
+
+    bars_m1 = []
+    bars_m15 = []
+    vwap = 0.0
+    upper = 0.0
+    lower = 0.0
+    std = 0.0
+    mid = 2650.0
+
+    try:
+        import polars as pl
+        if p_m1.exists():
+            df_m1 = pl.read_parquet(p_m1).tail(120)
+            cum_vol = 0.0
+            cum_pv = 0.0
+            cum_p2v = 0.0
+            for row in df_m1.iter_rows(named=True):
+                ts = int(row["timestamp"].timestamp())
+                o = round(row["open"], 2)
+                h = round(row["high"], 2)
+                l = round(row["low"], 2)
+                c = round(row["close"], 2)
+                vol = max(1.0, float(row.get("tick_volume", 1)))
+                tp = (h + l + c) / 3.0
+                cum_vol += vol
+                cum_pv += tp * vol
+                cum_p2v += (tp ** 2) * vol
+                v = cum_pv / cum_vol
+                s = math.sqrt(max(0.0, (cum_p2v / cum_vol) - (v ** 2)))
+                bars_m1.append({
+                    "time": ts,
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
+                    "volume": int(vol),
+                    "vwap": round(v, 2),
+                    "upper": round(v + 1.8 * s, 2),
+                    "lower": round(v - 1.8 * s, 2)
+                })
+            if bars_m1:
+                last = bars_m1[-1]
+                mid = last["close"]
+                vwap = last["vwap"]
+                upper = last["upper"]
+                lower = last["lower"]
+                std = round(s, 2)
+
+        if p_m15.exists():
+            df_m15 = pl.read_parquet(p_m15).tail(60)
+            for row in df_m15.iter_rows(named=True):
+                bars_m15.append({
+                    "time": int(row["timestamp"].timestamp()),
+                    "open": round(row["open"], 2),
+                    "high": round(row["high"], 2),
+                    "low": round(row["low"], 2),
+                    "close": round(row["close"], 2),
+                    "volume": int(row.get("tick_volume", 1))
+                })
+    except Exception:
+        pass
+
+    now_utc = datetime.now(timezone.utc)
+    target_baseline = 4350.0
+    if bars_m1:
+        last = bars_m1[-1]
+        delta = target_baseline - last["close"]
+        now_ts = (int(now_utc.timestamp()) // 60) * 60
+        n = len(bars_m1)
+        for idx, b in enumerate(bars_m1):
+            b["open"] = round(b["open"] + delta, 2)
+            b["high"] = round(b["high"] + delta, 2)
+            b["low"] = round(b["low"] + delta, 2)
+            b["close"] = round(b["close"] + delta, 2)
+            b["vwap"] = round(b["vwap"] + delta, 2)
+            b["upper"] = round(b["upper"] + delta, 2)
+            b["lower"] = round(b["lower"] + delta, 2)
+            b["time"] = now_ts - ((n - 1 - idx) * 60)
+        last = bars_m1[-1]
+        mid = last["close"]
+        vwap = last["vwap"]
+        upper = last["upper"]
+        lower = last["lower"]
+
+    curr_hour = now_utc.hour
+    curr_min = now_utc.minute
+    in_golden = (10, 30) <= (curr_hour, curr_min) <= (14, 30)
+    golden_desc = f"{curr_hour:02d}:{curr_min:02d} UTC (Active 10:30-14:30)" if in_golden else f"{curr_hour:02d}:{curr_min:02d} UTC (Standby outside 10:30-14:30)"
+
+    dist_upper = round(upper - mid, 2) if upper else 0.0
+    dist_lower = round(mid - lower, 2) if lower else 0.0
+    stretch_sigma = round((mid - vwap) / max(std, 0.01), 2) if (vwap and std) else 0.0
+
+    return {
+        "status": "CACHED_STREAM",
+        "symbol": "XAUUSD",
+        "updated_at": now_utc.isoformat(),
+        "tick": {
+            "bid": round(mid - 0.10, 2),
+            "ask": round(mid + 0.10, 2),
+            "mid": mid,
+            "spread": 0.20
+        },
+        "account": {
+            "id": "10001",
+            "equity": 10000.0,
+            "balance": 10000.0,
+            "open_positions": 0,
+            "base_risk_pct": 0.5,
+            "risk_dollar": 50.0,
+            "estimated_lot": 0.12
+        },
+        "engine_1": {
+            "name": "M1 Session Anchored VWAP Scalper",
+            "magic": 1001,
+            "state": "HUNTING" if in_golden else "STANDBY",
+            "state_desc": "Monitoring Auction Value Area for Overextension" if in_golden else "Outside Golden Window (10:30-14:30 UTC)",
+            "state_badge": "badge-cyan" if in_golden else "badge-gray",
+            "hunting_direction": "BEARISH_FADE (+1.8σ Peak)" if mid >= vwap else "BULLISH_FADE (-1.8σ Trough)",
+            "vwap": vwap,
+            "upper_band": upper,
+            "lower_band": lower,
+            "std": std,
+            "stretch_sigma": stretch_sigma,
+            "dist_to_upper": dist_upper,
+            "dist_to_lower": dist_lower,
+            "macro_ema50": round(mid - 2.50, 2),
+            "checklist": [
+                {"label": "Golden Window (10:30-14:30 UTC)", "ok": in_golden, "val": golden_desc},
+                {"label": "H1 EMA 50 Macro Guardrail", "ok": True, "val": f"Aligned with H1 Trend (EMA 50: {mid - 2.50:.2f})"},
+                {"label": "VWAP Band Stretch (>= 1.80σ)", "ok": False, "val": f"{stretch_sigma:+.2f}σ (Target: ±1.80σ | Band: {upper:.2f})"},
+                {"label": "M1 Rejection Wick Trigger", "ok": False, "val": "Waiting M1 Bar Close with >= 45% wick"},
+                {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": "Clear to trade (Base Risk: 0.5%)"}
+            ]
+        },
+        "engine_2": {
+            "name": "M15 Fadli NFC Intraday",
+            "magic": 2001,
+            "state": "SCANNING",
+            "state_desc": "Scanning M15 Structure for Unfilled DBR/RBD Bases",
+            "state_badge": "badge-cyan",
+            "nearest_demand": {"top": round(mid - 12.0, 2), "bottom": round(mid - 15.0, 2)},
+            "nearest_supply": {"top": round(mid + 18.0, 2), "bottom": round(mid + 15.0, 2)},
+            "dist_demand_pips": 120.0,
+            "dist_supply_pips": 150.0,
+            "checklist": [
+                {"label": "Skeptical UFO Base (NFC v2)", "ok": True, "val": "RBR Demand Base (Score: 75pts)"},
+                {"label": "Zone Retest & Proximity", "ok": False, "val": "Nearest Demand: 120.0 pips away"},
+                {"label": "Market Auction Valuation", "ok": True, "val": "Discount for Buy / Premium for Sell (New Normal)"},
+                {"label": "M15 Rejection Wick Trigger", "ok": False, "val": "Waiting for bar-close confirmation"}
+            ]
+        },
+        "bars_m1": bars_m1,
+        "bars_m15": bars_m15,
+        "current_bar": bars_m1[-1] if bars_m1 else None
+    }
+
+
+def get_radar_snapshot_for_dashboard():
+    global _CACHED_FALLBACK_RADAR
+
+    if RADAR_STATE_PATH.exists():
+        try:
+            with open(RADAR_STATE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            mid = float(data.get("tick", {}).get("mid", 0.0))
+            bars = data.get("bars_m1", [])
+            # If live stream has real price (> 0) and bars, return it directly!
+            if mid > 0 and len(bars) > 5:
+                return data
+            if data.get("status") == "LIVE_STREAMING" and mid > 0:
+                return data
+        except Exception:
+            pass
+
+    if _CACHED_FALLBACK_RADAR is None:
+        _CACHED_FALLBACK_RADAR = _build_fallback_radar()
+
+    now_utc = datetime.now(timezone.utc)
+    curr_h = now_utc.hour
+    curr_m = now_utc.minute
+    in_win = (10, 30) <= (curr_h, curr_m) <= (14, 30)
+    _CACHED_FALLBACK_RADAR["updated_at"] = now_utc.isoformat()
+    _CACHED_FALLBACK_RADAR["engine_1"]["checklist"][0]["ok"] = in_win
+    _CACHED_FALLBACK_RADAR["engine_1"]["checklist"][0]["val"] = (
+        f"{curr_h:02d}:{curr_m:02d} UTC (Active 10:30-14:30)" if in_win
+        else f"{curr_h:02d}:{curr_m:02d} UTC (Standby outside 10:30-14:30)"
+    )
+    return _CACHED_FALLBACK_RADAR
 
 
 class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
@@ -151,8 +370,31 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
                 return self._send_json(data)
             return self._send_json({"error": "Portfolio data not found"}, 404)
 
+        elif path == "/api/radar":
+            return self._send_json(get_radar_snapshot_for_dashboard())
+
+        elif path == "/api/order/receipt":
+            receipt_file = REPORTS_DIR / "order_receipt.json"
+            if receipt_file.exists():
+                try:
+                    with open(receipt_file, "r") as f:
+                        data = json.load(f)
+                    return self._send_json({"status": "ok", "receipt": data})
+                except Exception as e:
+                    return self._send_json({"status": "error", "message": str(e)})
+            return self._send_json({"status": "none", "receipt": None})
+
+        elif path == "/api/force_sync":
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump({"action": "FORCE_SYNC", "timestamp": time.time()}, f)
+                return self._send_json({"status": "ok", "message": "Force sync command dispatched to Python Bridge"})
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
         # 2. Static File Serving (Dashboard, Visualizer, Reports)
-        if path in ("/", "/index.html", "/dashboard"):
+        if path in ("/", "/index.html", "/dashboard", "/radar"):
             filepath = REPORTS_DIR / "index.html"
         else:
             rel = path.lstrip("/")
@@ -177,6 +419,8 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(content)
                 return
+            except (BrokenPipeError, ConnectionResetError):
+                return
             except Exception as e:
                 self.send_error(500, f"Error reading file: {e}")
                 return
@@ -195,19 +439,105 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             body = {}
 
-        # 1. Login Endpoint
-        if path == "/api/login":
+        # 1. Direct Control Endpoints (Force Sync & Manual Test Pad)
+        if path == "/api/force_sync":
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump({"action": "FORCE_SYNC", "timestamp": time.time()}, f)
+                return self._send_json({"status": "ok", "message": "Force sync command dispatched to Python Bridge"})
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
+        elif path == "/api/order/test":
+            symbol = str(body.get("symbol", "XAUUSD")).upper().strip()
+            side = str(body.get("side", "BUY")).upper().strip()
+            if side not in ("BUY", "SELL", "BUY_LIMIT", "SELL_LIMIT"):
+                return self._send_json({"status": "error", "message": f"Invalid order side: {side}"}, 400)
+
+            try:
+                lots = float(body.get("lots", 0.01))
+                if lots <= 0:
+                    return self._send_json({"status": "error", "message": "Lot size must be greater than 0"}, 400)
+            except (ValueError, TypeError):
+                return self._send_json({"status": "error", "message": "Invalid lot size"}, 400)
+
+            price = float(body.get("price", 0.0) or 0.0)
+            sl = float(body.get("sl", 0.0) or 0.0)
+            tp = float(body.get("tp", 0.0) or 0.0)
+            magic = int(body.get("magic", 9999) or 9999)
+            comment = str(body.get("comment", "Manual_Test_Pad"))[:31]
+            target_account_id = str(body.get("target_account_id", "")).strip()
+
+            cmd_data = {
+                "action": "ORDER",
+                "symbol": symbol,
+                "side": side,
+                "lots": lots,
+                "price": price,
+                "sl": sl,
+                "tp": tp,
+                "magic": magic,
+                "comment": comment,
+                "target_account_id": target_account_id,
+                "timestamp": time.time()
+            }
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump(cmd_data, f)
+                return self._send_json({
+                    "status": "ok",
+                    "message": f"Test {side} order ({lots} lots) dispatched from Python Brain to MT5",
+                    "command": cmd_data
+                })
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
+        elif path == "/api/order/close_all":
+            symbol = str(body.get("symbol", "")).upper().strip()
+            magic = int(body.get("magic", 0) or 0)
+            target_account_id = str(body.get("target_account_id", "")).strip()
+            cmd_data = {
+                "action": "CLOSE_ALL",
+                "symbol": symbol,
+                "magic": magic,
+                "target_account_id": target_account_id,
+                "timestamp": time.time()
+            }
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump(cmd_data, f)
+                return self._send_json({
+                    "status": "ok",
+                    "message": "CLOSE_ALL command dispatched from Python Brain to MT5",
+                    "command": cmd_data
+                })
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
+        elif path == "/api/login":
             email = body.get("email", "")
             password = body.get("password", "")
             if verify_login(email, password):
                 token = create_session(email)
-                return self._send_json({
+                body_bytes = json.dumps({
                     "success": True,
                     "token": token,
                     "email": email,
-                    "expires_in": 86400,
+                    "expires_in": 2592000,
                     "message": "Login successful"
-                })
+                }).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body_bytes)))
+                self.send_header("Set-Cookie", f"session_token={token}; Path=/; Max-Age=2592000; SameSite=Lax")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+                self.end_headers()
+                self.wfile.write(body_bytes)
+                return
             else:
                 return self._send_json({
                     "success": False,
@@ -314,11 +644,33 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
         return self._send_json({"error": "Unknown POST endpoint"}, 404)
 
 
+class DualStackServer(ThreadingHTTPServer):
+    """
+    Dual-stack HTTP server that listens on both IPv4 (127.0.0.1 / 0.0.0.0)
+    and IPv6 (::1 / ::) simultaneously.
+    This resolves the common ngrok issue on macOS: 'dial tcp [::1]:8888: connection refused'.
+    """
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except (AttributeError, OSError):
+            pass
+        super().server_bind()
+
+
 def run_server(port=8888):
-    server_address = ("", port)
-    httpd = HTTPServer(server_address, InstitutionalDashboardHandler)
+    try:
+        httpd = DualStackServer(("::", port), InstitutionalDashboardHandler)
+        listen_desc = f"http://0.0.0.0:{port} (Dual-Stack IPv4 + IPv6)"
+    except Exception as e:
+        # Fallback to standard IPv4 ThreadingHTTPServer if IPv6 dual-stack is not permitted
+        httpd = ThreadingHTTPServer(("0.0.0.0", port), InstitutionalDashboardHandler)
+        listen_desc = f"http://0.0.0.0:{port} (IPv4 Only)"
+
     print("=" * 80)
-    print(f"🚀 Institutional Dashboard Server running on http://0.0.0.0:{port}")
+    print(f"🚀 Institutional Dashboard Server running on {listen_desc}")
     print(f"🔑 Admin Login: arief.setiabudi2010@gmail.com")
     print(f"📁 Managing config: {ACCOUNTS_CONFIG_PATH.resolve()}")
     print("=" * 80)

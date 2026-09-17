@@ -65,3 +65,24 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
     - Kerugian Juli terpangkas menjadi hanya -$72.77!
 
 ---
+
+### **Fase Eksplorasi 8: Quantitative Stress-Test, Broker Reality Profiling & Antrian Validasi Empiris Naruto (Post-Partner Audit)**
+
+*   **Status**: **AKTIF / IN PROGRESS.**
+*   **Dokumen Acuan Utama**: `docs/STRATEGIC_EVOLUTION_PLAN.md` (SSOT Roadmap).
+*   **Konsep Utama**: *"Process Over Prediction — Jangan menelan mentah-mentah opini eksternal, buktikan lewat data empiris (Naruto Engine)."*
+*   **Aksi Operasional & Kebijakan Live**:
+    1.  **Engine 2 (Intraday M15 / Skeptical UFO)**: **HOLD LIVE FIRE**. Eksekusi order ke MT5 dinonaktifkan sementara karena sampel 57 trade memiliki nilai $p=0.33$. Modul tetap 100% aktif di Radar HUD sebagai kesadaran struktur pasar (*Premium/Discount*).
+    2.  **Engine 1 (M1 VWAP Scalper)**: Tetap berjalan live dengan kawalan `MonthlyRatchetGovernor`.
+*   **Antrian Eksperimen Naruto (Shadow Clone Backtest Queue)**:
+    1.  **Eksperimen N-01 (Multi-ATR Grid 0.8x s/d 2.0x)**: Uji hipotesis rekanan mengenai varian 1.0x ATR vs 1.5x ATR lintas rezim pasar (trending vs sideways vs low volatility).
+    2.  **Eksperimen N-02 (Wick-Touch SL vs Bar-Close Confirmation SL)**: Komparasi matematis antara proteksi anti-fakeout/anti-wick hunt kita melawan risiko pelebaran loss saat breakout.
+*   **Penelusuran Realitas Broker (Spread & Slippage Profiler)**:
+    1.  Merekam telemetri spread riil per jam dari terminal MT5 (PUPrime & Dupoin).
+    2.  Implementasi *Dynamic Spread Ceiling* berbasis moving average spread untuk mencegah deadlock order.
+    3.  Pencatatan live slippage MT5 via `order_receipt.json`.
+*   **Backlog Falsifikasi Institusional**:
+    1.  *Noise Ceiling Check* (Random Entry Control).
+    2.  *Directional Neutrality* (Opposite Side Test).
+    3.  *Out-of-Sample (OOS) Pipeline 70/15/15*.
+

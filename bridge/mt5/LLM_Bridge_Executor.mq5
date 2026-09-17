@@ -18,6 +18,8 @@ input string   InpServerHost     = "127.0.0.1";  // Python Brain Host IP
 input int      InpServerPort     = 5555;         // Python Brain Port
 input int      InpTimeoutMs      = 3000;         // Socket Timeout (ms)
 input ulong    InpDeviationPoints= 20;           // Max Slippage Deviation (points)
+input ulong    InpMagicNumber    = 1001;         // Default Expert Magic Number
+input int      InpSyncBars       = 360;          // Historical Bars to Sync on Reconnect (Default: 360 = 6 hours)
 input group "=== Note: Risk Management is 100% Handled via Dashboard ==="
 
 //--- GLOBAL VARIABLES
@@ -28,6 +30,8 @@ int            m_socket          = INVALID_HANDLE;
 bool           m_connected       = false;
 ulong          m_last_connect_ms = 0;
 datetime       m_last_heartbeat  = 0;
+ulong          m_last_timer_ms   = 0;
+string         m_incoming_buffer = "";
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -36,7 +40,15 @@ int OnInit()
 {
    m_trade.SetExpertMagicNumber(1001);
    m_trade.SetDeviationInPoints(InpDeviationPoints);
-   m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+
+   // Configure dynamic filling mode based on broker/symbol capabilities
+   uint filling = (uint)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) != 0)
+      m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+   else if((filling & SYMBOL_FILLING_IOC) != 0)
+      m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+   else
+      m_trade.SetTypeFilling(ORDER_FILLING_RETURN);
 
    PrintFormat("[LLM Bridge] Initialized. Account: %I64d (%s). Brain: %s:%d",
                AccountInfoInteger(ACCOUNT_LOGIN), AccountInfoString(ACCOUNT_COMPANY), InpServerHost, InpServerPort);
@@ -87,6 +99,7 @@ bool ConnectToServer()
 
    m_connected = true;
    PrintFormat("[LLM Bridge] CONNECTED SUCCESSFULLY to Python Brain at %s:%d!", InpServerHost, InpServerPort);
+   Sleep(50); // Allow OS/Wine socket buffers to settle before first send
 
    // Send Registration Handshake with Account Details
    string regJson = StringFormat(
@@ -95,7 +108,69 @@ bool ConnectToServer()
       m_account.Balance(), m_account.Equity()
    );
    SendString(regJson);
+
+   // Reconcile and catch up historical bars on connect/reconnect
+   SyncHistoricalBars();
    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Synchronize Historical M1 Bars to Python Brain on Reconnect      |
+//+------------------------------------------------------------------+
+void SyncHistoricalBars()
+{
+   if(!m_connected || m_socket == INVALID_HANDLE)
+      return;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false); // rates[0] is oldest, rates[copied-1] is newest
+   int copied = CopyRates(_Symbol, PERIOD_M1, 1, InpSyncBars, rates);
+   if(copied <= 0)
+   {
+      PrintFormat("[LLM Bridge] Historical sync skipped. CopyRates returned %d. Error: %d", copied, GetLastError());
+      return;
+   }
+
+   PrintFormat("[LLM Bridge] Synchronizing %d historical M1 bars with Python Brain...", copied);
+
+   int chunkSize = 60; // 60 bars per batch (~4-5 KB per chunk)
+   int totalBatches = (copied + chunkSize - 1) / chunkSize;
+
+   for(int b = 0; b < totalBatches; b++)
+   {
+      int startIdx = b * chunkSize;
+      int endIdx = MathMin(startIdx + chunkSize, copied);
+
+      string barsJson = "";
+      for(int i = startIdx; i < endIdx; i++)
+      {
+         long barTimeMs = (long)rates[i].time * 1000;
+         double spread = (rates[i].spread > 0) ? (rates[i].spread * _Point) : 0.20;
+         long vol = (rates[i].tick_volume > 0) ? rates[i].tick_volume : 1;
+
+         string item = StringFormat(
+            "{\"time\":%I64d,\"open\":%.2f,\"high\":%.2f,\"low\":%.2f,\"close\":%.2f,\"volume\":%I64d,\"spread\":%.2f}",
+            barTimeMs, rates[i].open, rates[i].high, rates[i].low, rates[i].close, vol, spread
+         );
+
+         if(barsJson != "")
+            barsJson += ",";
+         barsJson += item;
+      }
+
+      string payload = StringFormat(
+         "{\"type\":\"BAR_SYNC\",\"symbol\":\"%s\",\"batch\":%d,\"total\":%d,\"bars\":[%s]}\n",
+         _Symbol, b + 1, totalBatches, barsJson
+      );
+
+      if(!SendString(payload))
+      {
+         PrintFormat("[LLM Bridge] Failed to send BAR_SYNC batch %d/%d", b + 1, totalBatches);
+         break;
+      }
+   }
+
+   PrintFormat("[LLM Bridge] Historical sync complete! Sent %d bars across %d batches.", copied, totalBatches);
 }
 
 //+------------------------------------------------------------------+
@@ -114,69 +189,119 @@ void DisconnectServer()
 //+------------------------------------------------------------------+
 //| Send String Data over Socket                                     |
 //+------------------------------------------------------------------+
+int m_consecutive_send_fails = 0;
+
 bool SendString(string data)
 {
    if(!m_connected || m_socket == INVALID_HANDLE)
       return false;
 
    uchar buffer[];
-   int len = StringToCharArray(data, buffer) - 1; // Drop null terminator
+   int len = StringToCharArray(data, buffer, 0, -1, CP_UTF8) - 1; // Drop null terminator, explicit UTF-8
    if(len <= 0)
       return false;
 
+   ResetLastError();
    int sent = SocketSend(m_socket, buffer, len);
-   if(sent != len)
+   if(sent == len)
    {
-      PrintFormat("[LLM Bridge] SocketSend failed. Sent %d of %d bytes. Error: %d", sent, len, GetLastError());
-      DisconnectServer();
-      return false;
+      m_consecutive_send_fails = 0;
+      return true;
    }
-   return true;
+
+   int err = GetLastError();
+   m_consecutive_send_fails++;
+
+   // If temporary failure on high-frequency tick, do not tear down socket
+   if(m_consecutive_send_fails < 5)
+   {
+      return false; // Skip this individual tick cleanly
+   }
+
+   PrintFormat("[LLM Bridge] SocketSend connection lost after %d failures. Sent %d of %d bytes. Error: %d", m_consecutive_send_fails, sent, len, err);
+   m_consecutive_send_fails = 0;
+   DisconnectServer();
+   return false;
 }
 
 //+------------------------------------------------------------------+
 //| Read Incoming Data from Python Brain                             |
 //+------------------------------------------------------------------+
-string ReadIncoming()
+void PollIncomingCommands()
 {
    if(!m_connected || m_socket == INVALID_HANDLE)
-      return "";
+      return;
 
+   // Only read when bytes are ready to avoid socket timeout error 5273
    uint readable = SocketIsReadable(m_socket);
-   if(readable <= 0)
-      return "";
-
-   uchar buffer[];
-   ArrayResize(buffer, readable + 1);
-   int received = SocketRead(m_socket, buffer, readable, InpTimeoutMs);
-   if(received > 0)
+   if(readable > 0)
    {
-      buffer[received] = 0;
-      return CharArrayToString(buffer);
+      uchar buffer[];
+      ArrayResize(buffer, readable + 32);
+      ResetLastError();
+      int received = SocketRead(m_socket, buffer, readable, InpTimeoutMs);
+      if(received > 0)
+      {
+         string chunk = CharArrayToString(buffer, 0, received, CP_UTF8);
+         m_incoming_buffer += chunk;
+      }
    }
-   return "";
+
+   // Process complete newline-delimited JSON commands from stream buffer
+   while(StringFind(m_incoming_buffer, "\n") >= 0)
+   {
+      int newlinePos = StringFind(m_incoming_buffer, "\n");
+      string line = StringSubstr(m_incoming_buffer, 0, newlinePos);
+      m_incoming_buffer = StringSubstr(m_incoming_buffer, newlinePos + 1);
+      
+      StringTrimLeft(line);
+      StringTrimRight(line);
+      if(line != "")
+      {
+         PrintFormat("[LLM Bridge] Received command from Python: %s", line);
+         ProcessCommand(line);
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
-//| Simple JSON Value Extractor Helper                               |
+//| Robust JSON Value Extractor Helper (Handles spaces & types)       |
 //+------------------------------------------------------------------+
 string ExtractJsonString(string json, string key)
 {
-   string search = "\"" + key + "\":\"";
+   string search = "\"" + key + "\"";
    int pos = StringFind(json, search);
    if(pos < 0) return "";
    pos += StringLen(search);
-   int end = StringFind(json, "\"", pos);
-   if(end < 0) return "";
-   return StringSubstr(json, pos, end - pos);
-}
+   
+   // Skip spaces and locate ':'
+   while(pos < StringLen(json))
+   {
+      ushort ch = StringGetCharacter(json, pos);
+      if(ch == ':') { pos++; break; }
+      pos++;
+   }
+   
+   // Skip whitespace until value starts
+   while(pos < StringLen(json))
+   {
+      ushort ch = StringGetCharacter(json, pos);
+      if(ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') break;
+      pos++;
+   }
 
-double ExtractJsonDouble(string json, string key)
-{
-   string search = "\"" + key + "\":";
-   int pos = StringFind(json, search);
-   if(pos < 0) return 0.0;
-   pos += StringLen(search);
+   if(pos >= StringLen(json)) return "";
+
+   // Check if string is enclosed in quotes
+   if(StringGetCharacter(json, pos) == '\"')
+   {
+      pos++; // skip opening quote
+      int end = StringFind(json, "\"", pos);
+      if(end < 0) return "";
+      return StringSubstr(json, pos, end - pos);
+   }
+
+   // Non-quoted value (number, boolean, or identifier)
    int end = pos;
    while(end < StringLen(json))
    {
@@ -184,7 +309,17 @@ double ExtractJsonDouble(string json, string key)
       if(ch == ',' || ch == '}' || ch == '\n' || ch == '\r') break;
       end++;
    }
-   return StringToDouble(StringSubstr(json, pos, end - pos));
+   string val = StringSubstr(json, pos, end - pos);
+   StringTrimLeft(val);
+   StringTrimRight(val);
+   return val;
+}
+
+double ExtractJsonDouble(string json, string key)
+{
+   string val = ExtractJsonString(json, key);
+   if(val == "") return 0.0;
+   return StringToDouble(val);
 }
 
 //+------------------------------------------------------------------+
@@ -199,11 +334,18 @@ void ProcessCommand(string cmdJson)
       return;
    }
 
+   if(action == "SYNC_BARS")
+   {
+      SyncHistoricalBars();
+      return;
+   }
+
    if(action == "ORDER")
    {
       string symbol    = ExtractJsonString(cmdJson, "symbol");
       string side      = ExtractJsonString(cmdJson, "side");
       double lots      = ExtractJsonDouble(cmdJson, "lots");
+      double price     = ExtractJsonDouble(cmdJson, "price");
       double sl        = ExtractJsonDouble(cmdJson, "sl");
       double tp        = ExtractJsonDouble(cmdJson, "tp");
       string comment   = ExtractJsonString(cmdJson, "comment");
@@ -213,34 +355,83 @@ void ProcessCommand(string cmdJson)
       if(comment == "") comment = "LLM_AI_Trade";
       if(magic <= 0) magic = (long)InpMagicNumber;
 
+      // 1. Check Terminal Algo Trading Master Switch
+      if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+      {
+         string receipt = StringFormat(
+            "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":false,\"ticket\":0,\"retcode\":10027,\"retcode_desc\":\"Algo Trading is DISABLED in MT5 toolbar! Click Algo Trading button.\",\"price\":0.0,\"magic\":%I64u}\n",
+            symbol, side, lots, (ulong)magic
+         );
+         SendString(receipt);
+         Print("[LLM Bridge] ❌ ORDER REJECTED: Algo Trading button in MT5 toolbar is turned OFF! (Retcode: 10027)");
+         return;
+      }
+
+      // 2. Check EA Automated Trading Permission
+      if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+      {
+         string receipt = StringFormat(
+            "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":false,\"ticket\":0,\"retcode\":10026,\"retcode_desc\":\"EA Automated Trading not allowed! Check 'Allow Algo Trading' in EA properties.\",\"price\":0.0,\"magic\":%I64u}\n",
+            symbol, side, lots, (ulong)magic
+         );
+         SendString(receipt);
+         Print("[LLM Bridge] ❌ ORDER REJECTED: 'Allow Algo Trading' is not checked in EA properties! (Retcode: 10026)");
+         return;
+      }
+
       m_trade.SetExpertMagicNumber((ulong)magic);
+
+      // 3. Set proper filling mode for this symbol
+      uint symFilling = (uint)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+      if((symFilling & SYMBOL_FILLING_FOK) != 0)
+         m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+      else if((symFilling & SYMBOL_FILLING_IOC) != 0)
+         m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+      else
+         m_trade.SetTypeFilling(ORDER_FILLING_RETURN);
 
       bool success = false;
       if(side == "BUY")
       {
-         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-         success = m_trade.Buy(lots, symbol, ask, sl, tp, comment);
+         // For market execution, 0.0 allows CTrade to fetch current ask automatically
+         double execPrice = (price > 0.0) ? price : 0.0;
+         success = m_trade.Buy(lots, symbol, execPrice, sl, tp, comment);
       }
       else if(side == "SELL")
       {
+         // For market execution, 0.0 allows CTrade to fetch current bid automatically
+         double execPrice = (price > 0.0) ? price : 0.0;
+         success = m_trade.Sell(lots, symbol, execPrice, sl, tp, comment);
+      }
+      else if(side == "BUY_LIMIT")
+      {
+         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+         double execPrice = (price > 0.0) ? price : (ask - 2.0);
+         success = m_trade.BuyLimit(lots, execPrice, symbol, sl, tp, ORDER_TIME_GTC, 0, comment);
+      }
+      else if(side == "SELL_LIMIT")
+      {
          double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-         success = m_trade.Sell(lots, symbol, bid, sl, tp, comment);
+         double execPrice = (price > 0.0) ? price : (bid + 2.0);
+         success = m_trade.SellLimit(lots, execPrice, symbol, sl, tp, ORDER_TIME_GTC, 0, comment);
       }
 
       // Send execution receipt back to Python
       string receipt = StringFormat(
-         "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":%s,\"ticket\":%I64u,\"retcode\":%d,\"deal\":%I64u,\"price\":%.2f,\"magic\":%I64u}\n",
+         "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":%s,\"ticket\":%I64u,\"retcode\":%u,\"retcode_desc\":\"%s\",\"deal\":%I64u,\"price\":%.2f,\"magic\":%I64u}\n",
          symbol, side, lots, success ? "true" : "false",
-         m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultDeal(), m_trade.ResultPrice(), (ulong)magic
+         m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultRetcodeDescription(), m_trade.ResultDeal(), m_trade.ResultPrice(), (ulong)magic
       );
       SendString(receipt);
-      PrintFormat("[LLM Bridge] Order %s %s %.2f (Magic: %I64u) -> Result: %s (Deal: %I64u, Price: %.2f)",
-                  side, symbol, lots, (ulong)magic, success ? "OK" : "FAILED", m_trade.ResultDeal(), m_trade.ResultPrice());
+      PrintFormat("[LLM Bridge] Order %s %s %.2f (Magic: %I64u) -> Result: %s (Ticket: %I64u, Retcode: %u - %s, Deal: %I64u, Price: %.2f)",
+                  side, symbol, lots, (ulong)magic, success ? "OK" : "FAILED", m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultRetcodeDescription(), m_trade.ResultDeal(), m_trade.ResultPrice());
    }
    else if(action == "CLOSE_ALL")
    {
       string symbol = ExtractJsonString(cmdJson, "symbol");
       long   magic  = (long)ExtractJsonDouble(cmdJson, "magic");
+      int closedPos = 0;
+      int deletedOrders = 0;
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          if(m_position.SelectByIndex(i))
@@ -248,10 +439,32 @@ void ProcessCommand(string cmdJson)
             bool matchMagic = (magic <= 0) || (m_position.Magic() == (ulong)magic);
             if(matchMagic && (symbol == "" || m_position.Symbol() == symbol))
             {
-               m_trade.PositionClose(m_position.Ticket());
+               if(m_trade.PositionClose(m_position.Ticket()))
+                  closedPos++;
             }
          }
       }
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = OrderGetTicket(i);
+         if(ticket > 0)
+         {
+            long ordMagic = OrderGetInteger(ORDER_MAGIC);
+            string ordSym = OrderGetString(ORDER_SYMBOL);
+            bool matchMagic = (magic <= 0) || (ordMagic == magic);
+            if(matchMagic && (symbol == "" || ordSym == symbol))
+            {
+               if(m_trade.OrderDelete(ticket))
+                  deletedOrders++;
+            }
+         }
+      }
+      string receipt = StringFormat(
+         "{\"type\":\"ORDER_RECEIPT\",\"action\":\"CLOSE_ALL\",\"symbol\":\"%s\",\"closed_positions\":%d,\"deleted_orders\":%d,\"magic\":%I64u,\"success\":true}\n",
+         symbol, closedPos, deletedOrders, (ulong)magic
+      );
+      SendString(receipt);
+      PrintFormat("[LLM Bridge] Close All -> Closed %d positions, deleted %d pending orders", closedPos, deletedOrders);
    }
 }
 
@@ -268,14 +481,15 @@ void OnTick()
    double spread = ask - bid;
    long   timeMs = (long)TimeCurrent() * 1000;
 
-   // Count open positions for our Magic Number
+   // Count open positions for our dual engines (1001 Scalp / 2001 Intraday)
    int openCount = 0;
    double totalUnrealized = 0.0;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       if(m_position.SelectByIndex(i))
       {
-         if(m_position.Magic() == InpMagicNumber && m_position.Symbol() == _Symbol)
+         ulong posMagic = m_position.Magic();
+         if((posMagic == 1001 || posMagic == 2001 || posMagic == InpMagicNumber) && m_position.Symbol() == _Symbol)
          {
             openCount++;
             totalUnrealized += m_position.Profit();
@@ -293,19 +507,27 @@ void OnTick()
    SendString(tickJson);
 
    // Check if Python sent back commands
-   string response = ReadIncoming();
-   if(response != "")
-   {
-      ProcessCommand(response);
-   }
+   PollIncomingCommands();
 }
 
 //+------------------------------------------------------------------+
-//| Timer function (Heartbeat & Reconnect)                           |
+//| Timer function (Heartbeat, Reconnect & Sleep-Wake Auto-Sync)     |
 //+------------------------------------------------------------------+
 void OnTimer()
 {
    ulong now_ms = GetTickCount64();
+
+   // 1. Detect Laptop Sleep / Resume or Timer Stalls (> 4 seconds elapsed on a 1-second timer)
+   if(m_last_timer_ms > 0 && (now_ms - m_last_timer_ms > 4000))
+   {
+      PrintFormat("[LLM Bridge] Laptop Sleep/Wake detected (Elapsed: %I64d ms). Refreshing connection and historical bars...", now_ms - m_last_timer_ms);
+      DisconnectServer();
+      ConnectToServer();
+      m_last_timer_ms = now_ms;
+      return;
+   }
+   m_last_timer_ms = now_ms;
+
    if(!m_connected)
    {
       if(now_ms - m_last_connect_ms >= 3000)
@@ -317,11 +539,7 @@ void OnTimer()
    else
    {
       // Check for incoming commands during quiet periods
-      string response = ReadIncoming();
-      if(response != "")
-      {
-         ProcessCommand(response);
-      }
+      PollIncomingCommands();
    }
 }
 //+------------------------------------------------------------------+

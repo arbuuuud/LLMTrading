@@ -85,8 +85,14 @@ class TestLiveBridge(unittest.TestCase):
                 magic=1001
             )
 
-            order_line = await reader.readline()
-            order_data = json.loads(order_line.decode("utf-8"))
+            # Read line from server (handles SYNC_BARS if sent on connect)
+            line1 = await reader.readline()
+            data1 = json.loads(line1.decode("utf-8"))
+            if data1.get("action") == "SYNC_BARS":
+                line1 = await reader.readline()
+                data1 = json.loads(line1.decode("utf-8"))
+
+            order_data = data1
             self.assertEqual(order_data["action"], "ORDER")
             self.assertEqual(order_data["magic"], 1001)
             self.assertEqual(order_data["lots"], 0.10)
@@ -131,6 +137,171 @@ class TestLiveBridge(unittest.TestCase):
             server_task.cancel()
 
         asyncio.run(run_socket_test())
+
+    def test_handshake_register_and_resilience(self):
+        async def run_resilience_test():
+            server = LiveBridgeServer(host="127.0.0.1", port=5558, dry_run=True)
+            server_task = asyncio.create_task(server.start())
+
+            await asyncio.sleep(0.2)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", 5558)
+
+            # 1. Send REGISTER message (triggers get_governor_for_account with time.time())
+            reg_msg = {
+                "type": "REGISTER",
+                "account_id": "10001",
+                "company": "ICMarkets",
+                "balance": 10000.0,
+                "equity": 10000.0
+            }
+            writer.write((json.dumps(reg_msg) + "\n").encode("utf-8"))
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            self.assertEqual(server.active_account_id, "10001")
+            self.assertIn("10001", server.governors)
+
+            # 2. Send malformed line (test resilience - should not crash bridge or disconnect MT5)
+            writer.write(b"MALFORMED_NON_JSON_LINE\n")
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            # 3. Send valid TICK and verify server is still connected and operational
+            tick = {
+                "type": "TICK",
+                "symbol": "XAUUSD",
+                "bid": 3310.0,
+                "ask": 3310.20,
+                "spread": 0.20,
+                "time": 1748342400000,
+                "equity": 10000.0,
+                "open_positions": 0,
+                "account_id": "10001"
+            }
+            writer.write((json.dumps(tick) + "\n").encode("utf-8"))
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            self.assertIsNotNone(server.latest_tick)
+            self.assertEqual(server.latest_tick["symbol"], "XAUUSD")
+
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+            server_task.cancel()
+
+        asyncio.run(run_resilience_test())
+
+    def test_historical_bar_sync_reconciliation(self):
+        """
+        Tests that when MT5 reconnects after being disconnected for hours,
+        it sends BAR_SYNC batches which re-anchor VWAP and update M15 structures
+        without emitting false trade signals.
+        """
+        async def run_sync_test():
+            server = LiveBridgeServer(host="127.0.0.1", port=5560, dry_run=True)
+            server_task = asyncio.create_task(server.start())
+            await asyncio.sleep(0.2)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", 5560)
+
+            # 1. Send Handshake
+            reg = {
+                "type": "REGISTER",
+                "account_id": "10001",
+                "symbol": "XAUUSD",
+                "company": "ICMarkets",
+                "currency": "USD",
+                "balance": 10000.0,
+                "equity": 10000.0
+            }
+            writer.write((json.dumps(reg) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.1)
+
+            # 2. Simulate MT5 sending 60 historical M1 bars (1 hour of missed market data)
+            t0 = 1748342400000  # 10:40 UTC
+            sync_bars = []
+            for i in range(60):
+                p = 4340.0 + (i * 0.1)
+                sync_bars.append({
+                    "time": t0 + (i * 60000),
+                    "open": round(p, 2),
+                    "high": round(p + 0.5, 2),
+                    "low": round(p - 0.3, 2),
+                    "close": round(p + 0.2, 2),
+                    "volume": 250 + i,
+                    "spread": 0.20
+                })
+
+            sync_payload = {
+                "type": "BAR_SYNC",
+                "symbol": "XAUUSD",
+                "batch": 1,
+                "total": 1,
+                "bars": sync_bars
+            }
+            writer.write((json.dumps(sync_payload) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.3)
+
+            # 3. Assert VWAP and indicators are re-anchored
+            self.assertGreater(server.scalper_strategy.current_vwap, 4300.0)
+            self.assertGreater(server.scalper_strategy.upper_band, server.scalper_strategy.current_vwap)
+            self.assertLess(server.scalper_strategy.lower_band, server.scalper_strategy.current_vwap)
+
+            # Ensure no rogue trades were executed during catch-up
+            self.assertEqual(len(server.scalper_adapter.positions), 0)
+            self.assertEqual(server.data_integrity_status, "SYNCHRONIZED")
+            self.assertEqual(server.synced_bars_count, 60)
+
+            # 4. Test multi-batch atomic sync buffering
+            batch1 = [{"time": t0 + (i * 60000), "open": 4340.0, "high": 4341.0, "low": 4339.0, "close": 4340.5, "volume": 100, "spread": 0.20} for i in range(10)]
+            batch2 = [{"time": t0 + ((i + 10) * 60000), "open": 4340.5, "high": 4342.0, "low": 4340.0, "close": 4341.5, "volume": 100, "spread": 0.20} for i in range(10)]
+
+            # Send batch 1 of 2
+            writer.write((json.dumps({"type": "BAR_SYNC", "symbol": "XAUUSD", "batch": 1, "total": 2, "bars": batch1}) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.1)
+            # Prior history should NOT be cleared until total batches arrive
+            self.assertEqual(len(server._pending_sync_bars), 10)
+
+            # Send batch 2 of 2
+            writer.write((json.dumps({"type": "BAR_SYNC", "symbol": "XAUUSD", "batch": 2, "total": 2, "bars": batch2}) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.2)
+            self.assertEqual(len(server._pending_sync_bars), 0)
+            self.assertEqual(server.synced_bars_count, 20)
+            self.assertEqual(server.data_integrity_status, "SYNCHRONIZED")
+
+            # 5. Stream next live tick seamlessly
+            next_tick = {
+                "type": "TICK",
+                "account_id": "10001",
+                "symbol": "XAUUSD",
+                "bid": 4346.20,
+                "ask": 4346.40,
+                "spread": 0.20,
+                "time": t0 + (60 * 60000) + 15000,
+                "equity": 10000.0,
+                "balance": 10000.0,
+                "open_positions": 0
+            }
+            writer.write((json.dumps(next_tick) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.2)
+
+            self.assertEqual(server.latest_tick["bid"], 4346.20)
+            print(f"\n[Test Result] VWAP after historical catch-up: ${server.scalper_strategy.current_vwap:.2f}")
+            print(f"[Test Result] Upper Band: ${server.scalper_strategy.upper_band:.2f} | Lower: ${server.scalper_strategy.lower_band:.2f}")
+
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+            server_task.cancel()
+
+        asyncio.run(run_sync_test())
 
 
 if __name__ == "__main__":
