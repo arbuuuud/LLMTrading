@@ -129,4 +129,18 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
     - [x] *Step 4*: Walk-Forward Rolling Analysis (14 rolling windows across 2010-2026; Walk-Forward Efficiency **89.1%** melampaui standar Robert Pardo $>60\%$).
     - [x] *Step 5*: Live Pilot Run Engine Deployment (`bridge/server.py` terintegrasi agregator M3 dan profil risiko 1%/hari, siap eksekusi di VPS IndoVM).
 
+---
+
+### **Fase Eksplorasi 11: High-Precision LTF Sniper & Dual-Engine Integration (HTF POI + Fibo OTE + LTF CHoCH)**
+
+*   **Status**: **DOKUMENTASI LENGKAP / ROADMAP AKTIF.**
+*   **Dokumen Acuan Utama**: `docs/HIGH_PRECISION_LTF_SNIPER_ARCHITECTURE.md` (SSOT Spesifikasi Sniper Fraktal).
+*   **Target Rasio Asimetris**: Melipatgandakan R:R dari $1 : 2.5$ menjadi **$1 : 5.0$ s/d $1 : 8.0+$** dengan kompresi Stop Loss dari \$6.00 ke **\$1.20 - \$1.80**.
+*   **4-Stage Multi-Timeframe Pipeline**:
+    1.  *HTF Context (H4/H1)*: Arah Macro H4 EMA 50 + Zona Base NFC (DBR/RBD/RBR/DBD).
+    2.  *Fibonacci OTE (Optimal Trade Entry)*: Golden Pocket 61.8% - 78.6%.
+    3.  *Equilibrium 50% Rule*: Buy hanya di Discount (<50%), Sell hanya di Premium (>50%).
+    4.  *LTF Precision Sniper (M3/M1)*: 4 Model Trigger (Smart Limit vs M15 Candle vs M3 Rejection Wick $\ge 45\%$ vs M3 Change of Character).
+*   **Target Uji Validasi**: Meluncurkan **216 Klon Paralel Kage Bunshin Agent 2** melintasi 16.6 Tahun data modern (2010–2026) untuk menguji efektivitas konfirmasi LTF vs Smart Limit.
+
 
