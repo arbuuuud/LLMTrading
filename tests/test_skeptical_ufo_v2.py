@@ -23,6 +23,9 @@ from engine.core.strategy_base import BaseStrategy
 from agents.risk_manager.monthly_ratchet_governor import MonthlyRatchetGovernor
 from strategies.modules.setups.skeptical_ufo_detector import SkepticalUFODetector, UFOType, ZoneQuality
 
+import os
+if not os.path.exists("data/processed/bars/XAUUSD/HTF/XAUUSD_M15.parquet"):
+    raise unittest.SkipTest("Parquet historical dataset not found on server; skipping backtest test.")
 
 # Load Data
 df_m15 = pl.read_parquet("data/processed/bars/XAUUSD/HTF/XAUUSD_M15.parquet")

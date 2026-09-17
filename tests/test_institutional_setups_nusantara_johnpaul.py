@@ -27,6 +27,10 @@ from engine.metrics.performance import PerformanceCalculator
 from engine.core.strategy_base import BaseStrategy
 from agents.risk_manager.monthly_ratchet_governor import MonthlyRatchetGovernor
 
+import os
+if not os.path.exists("data/processed/bars/XAUUSD/HTF/XAUUSD_M15.parquet"):
+    raise unittest.SkipTest("Parquet historical dataset not found on server; skipping backtest test.")
+
 print("[Naruto Brain] Loading datasets for Institutional Setup Audit...")
 df_m15 = pl.read_parquet("data/processed/bars/XAUUSD/HTF/XAUUSD_M15.parquet")
 df_m1 = pl.read_parquet("data/processed/bars/XAUUSD/M1/XAUUSD_M1.parquet")

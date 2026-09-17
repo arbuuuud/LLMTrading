@@ -29,6 +29,9 @@ class TestMultiAgentFramework(unittest.TestCase):
     def setUp(self):
         self.orchestrator = MultiAgentOrchestrator()
         self.parquet_path = "data/processed/bars/XAUUSD/M1/XAUUSD_M1.parquet"
+        import os
+        if not os.path.exists(self.parquet_path):
+            raise unittest.SkipTest("Parquet dataset not found on server; skipping.")
         self.df = pl.read_parquet(self.parquet_path)
 
     def test_market_regime_detector(self):

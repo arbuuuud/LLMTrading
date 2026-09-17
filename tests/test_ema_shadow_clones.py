@@ -29,7 +29,11 @@ from engine.execution.slippage import FixedSlippageModel
 from engine.metrics.performance import PerformanceCalculator
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 
-# Preload data
+# Preload data guard
+import os
+if not os.path.exists("data/processed/bars/XAUUSD/M1/XAUUSD_M1.parquet"):
+    raise unittest.SkipTest("Parquet historical dataset not found on server; skipping backtest test.")
+
 df_m1 = pl.read_parquet("data/processed/bars/XAUUSD/M1/XAUUSD_M1.parquet")
 df_h1 = pl.read_parquet("data/processed/bars/XAUUSD/HTF/XAUUSD_H1.parquet")
 df_h4 = pl.read_parquet("data/processed/bars/XAUUSD/HTF/XAUUSD_H4.parquet")
