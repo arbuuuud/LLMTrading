@@ -1,7 +1,7 @@
 """
 LLMTrading Institutional Web Dashboard & Multi-Account Risk Management Server.
 Handles:
-- User Authentication (arief.setiabudi2010@gmail.com / P@ssw0rd!)
+- User Authentication (Session cookie & hashed token)
 - Multi-Account MT5 Management
 - Dynamic Risk Profile Assignment (Prop Firm, Sweet Spot, Aggressive, YOLO)
 - Live Static File Serving (Canvas Visualizer, Charts, Reports)
