@@ -42,6 +42,10 @@ temp/
 tmp/
 .cache/
 reports/radar_state.json*
+reports/bridge_command.json*
+reports/order_receipt.json*
+knowledge/learnings/audit_*.json
+.pi/
 
 # OS / Editor
 .DS_Store

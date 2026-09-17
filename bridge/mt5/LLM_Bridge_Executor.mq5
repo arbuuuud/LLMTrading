@@ -297,6 +297,7 @@ void ProcessCommand(string cmdJson)
       string symbol    = ExtractJsonString(cmdJson, "symbol");
       string side      = ExtractJsonString(cmdJson, "side");
       double lots      = ExtractJsonDouble(cmdJson, "lots");
+      double price     = ExtractJsonDouble(cmdJson, "price");
       double sl        = ExtractJsonDouble(cmdJson, "sl");
       double tp        = ExtractJsonDouble(cmdJson, "tp");
       string comment   = ExtractJsonString(cmdJson, "comment");
@@ -312,28 +313,44 @@ void ProcessCommand(string cmdJson)
       if(side == "BUY")
       {
          double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-         success = m_trade.Buy(lots, symbol, ask, sl, tp, comment);
+         double execPrice = (price > 0.0) ? price : ask;
+         success = m_trade.Buy(lots, symbol, execPrice, sl, tp, comment);
       }
       else if(side == "SELL")
       {
          double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-         success = m_trade.Sell(lots, symbol, bid, sl, tp, comment);
+         double execPrice = (price > 0.0) ? price : bid;
+         success = m_trade.Sell(lots, symbol, execPrice, sl, tp, comment);
+      }
+      else if(side == "BUY_LIMIT")
+      {
+         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+         double execPrice = (price > 0.0) ? price : (ask - 2.0);
+         success = m_trade.BuyLimit(lots, execPrice, symbol, sl, tp, ORDER_TIME_GTC, 0, comment);
+      }
+      else if(side == "SELL_LIMIT")
+      {
+         double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+         double execPrice = (price > 0.0) ? price : (bid + 2.0);
+         success = m_trade.SellLimit(lots, execPrice, symbol, sl, tp, ORDER_TIME_GTC, 0, comment);
       }
 
       // Send execution receipt back to Python
       string receipt = StringFormat(
-         "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":%s,\"ticket\":%I64u,\"retcode\":%d,\"deal\":%I64u,\"price\":%.2f,\"magic\":%I64u}\n",
+         "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":%s,\"ticket\":%I64u,\"retcode\":%u,\"retcode_desc\":\"%s\",\"deal\":%I64u,\"price\":%.2f,\"magic\":%I64u}\n",
          symbol, side, lots, success ? "true" : "false",
-         m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultDeal(), m_trade.ResultPrice(), (ulong)magic
+         m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultRetcodeDescription(), m_trade.ResultDeal(), m_trade.ResultPrice(), (ulong)magic
       );
       SendString(receipt);
-      PrintFormat("[LLM Bridge] Order %s %s %.2f (Magic: %I64u) -> Result: %s (Deal: %I64u, Price: %.2f)",
-                  side, symbol, lots, (ulong)magic, success ? "OK" : "FAILED", m_trade.ResultDeal(), m_trade.ResultPrice());
+      PrintFormat("[LLM Bridge] Order %s %s %.2f (Magic: %I64u) -> Result: %s (Ticket: %I64u, Retcode: %u - %s, Deal: %I64u, Price: %.2f)",
+                  side, symbol, lots, (ulong)magic, success ? "OK" : "FAILED", m_trade.ResultOrder(), m_trade.ResultRetcode(), m_trade.ResultRetcodeDescription(), m_trade.ResultDeal(), m_trade.ResultPrice());
    }
    else if(action == "CLOSE_ALL")
    {
       string symbol = ExtractJsonString(cmdJson, "symbol");
       long   magic  = (long)ExtractJsonDouble(cmdJson, "magic");
+      int closedPos = 0;
+      int deletedOrders = 0;
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          if(m_position.SelectByIndex(i))
@@ -341,10 +358,32 @@ void ProcessCommand(string cmdJson)
             bool matchMagic = (magic <= 0) || (m_position.Magic() == (ulong)magic);
             if(matchMagic && (symbol == "" || m_position.Symbol() == symbol))
             {
-               m_trade.PositionClose(m_position.Ticket());
+               if(m_trade.PositionClose(m_position.Ticket()))
+                  closedPos++;
             }
          }
       }
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = OrderGetTicket(i);
+         if(ticket > 0)
+         {
+            long ordMagic = OrderGetInteger(ORDER_MAGIC);
+            string ordSym = OrderGetString(ORDER_SYMBOL);
+            bool matchMagic = (magic <= 0) || (ordMagic == magic);
+            if(matchMagic && (symbol == "" || ordSym == symbol))
+            {
+               if(m_trade.OrderDelete(ticket))
+                  deletedOrders++;
+            }
+         }
+      }
+      string receipt = StringFormat(
+         "{\"type\":\"ORDER_RECEIPT\",\"action\":\"CLOSE_ALL\",\"symbol\":\"%s\",\"closed_positions\":%d,\"deleted_orders\":%d,\"magic\":%I64u,\"success\":true}\n",
+         symbol, closedPos, deletedOrders, (ulong)magic
+      );
+      SendString(receipt);
+      PrintFormat("[LLM Bridge] Close All -> Closed %d positions, deleted %d pending orders", closedPos, deletedOrders);
    }
 }
 

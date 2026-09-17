@@ -728,6 +728,98 @@
             </div>
         </div>
 
+        <!-- ============================================================= -->
+        <!-- MT5 DIRECT ORDER EXECUTION & SIMULATION TEST PAD              -->
+        <!-- ============================================================= -->
+        <div class="table-box" style="margin:0 0 24px 0; border: 1px solid #1f6feb; box-shadow: 0 4px 24px rgba(31, 111, 235, 0.18);">
+            <div class="table-header" style="background: linear-gradient(90deg, #161b22 0%, #0d1117 100%); border-bottom: 1px solid #30363d; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <span style="color:#58a6ff; font-weight:700; font-size:1.0rem;">🕹️ MetaTrader 5 Direct Order Execution & Simulation Pad</span>
+                    <span style="font-size:0.75rem; color:#8b949e; margin-left:10px;">Simulasi Firing Sinyal Real-time dari Python Brain $\rightarrow$ MT5 (TCP:5555)</span>
+                </div>
+                <div id="test-pad-status" style="font-size:0.75rem; padding:4px 10px; border-radius:4px; background:#21262d; border:1px solid #30363d;">
+                    Bridge: <span id="test-pad-conn" style="color:#3fb950; font-weight:bold;">🟢 Ready</span>
+                </div>
+            </div>
+            
+            <div style="padding: 20px; background: #0d1117;">
+                <!-- Parameters Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px; margin-bottom: 16px;">
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">SYMBOL</label>
+                        <input type="text" id="test-order-symbol" class="form-input" value="XAUUSD" style="width:100%; font-weight:bold; color:#f0f6fc; text-transform:uppercase;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">LOT SIZE</label>
+                        <input type="number" id="test-order-lots" class="form-input" value="0.01" step="0.01" min="0.01" max="50.0" style="width:100%; font-weight:bold; color:#58a6ff;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">LIMIT PRICE (FOR PENDING)</label>
+                        <input type="number" id="test-order-price" class="form-input" placeholder="Kosong = Market" step="0.01" style="width:100%; font-weight:bold; color:#e3b341;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">STOP LOSS (SL)</label>
+                        <input type="number" id="test-order-sl" class="form-input" placeholder="0.00 (Opsional)" step="0.01" style="width:100%; font-weight:bold; color:#f85149;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">TAKE PROFIT (TP)</label>
+                        <input type="number" id="test-order-tp" class="form-input" placeholder="0.00 (Opsional)" step="0.01" style="width:100%; font-weight:bold; color:#3fb950;">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.75rem; color:#8b949e; margin-bottom:6px; font-weight:600;">MAGIC NUMBER</label>
+                        <select id="test-order-magic" class="form-input" style="width:100%;">
+                            <option value="9999" selected>9999 (Manual Test)</option>
+                            <option value="1001">1001 (Scalper M1 Engine)</option>
+                            <option value="2001">2001 (Intraday M15 Engine)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Live Price Reference & Quick Limit Buttons -->
+                <div style="display:flex; justify-content:space-between; align-items:center; background:#161b22; padding:10px 14px; border-radius:6px; margin-bottom:16px; border:1px solid #30363d; flex-wrap:wrap; gap:10px;">
+                    <div style="font-size:0.8rem; color:#c9d1d9; display:flex; gap:16px; align-items:center;">
+                        <span>📊 Harga Live MT5: <strong id="pad-live-bid" style="color:#f85149;">Bid: --</strong> | <strong id="pad-live-ask" style="color:#3fb950;">Ask: --</strong></span>
+                        <span>Spread: <strong id="pad-live-spread" style="color:#e3b341;">--</strong></span>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <button type="button" class="btn-submit" style="padding:4px 10px; font-size:0.75rem; background:#21262d; border:1px solid #30363d; color:#58a6ff; cursor:pointer;" onclick="fillLimitPrice('BID_MINUS')">
+                            📉 Set Limit (-$2.00 di Bawah Bid)
+                        </button>
+                        <button type="button" class="btn-submit" style="padding:4px 10px; font-size:0.75rem; background:#21262d; border:1px solid #30363d; color:#d2a8ff; cursor:pointer;" onclick="fillLimitPrice('ASK_PLUS')">
+                            📈 Set Limit (+$2.00 di Atas Ask)
+                        </button>
+                        <button type="button" class="btn-submit" style="padding:4px 10px; font-size:0.75rem; background:#21262d; border:1px solid #30363d; color:#8b949e; cursor:pointer;" onclick="document.getElementById('test-order-price').value=''">
+                            ✖️ Hapus Harga (Market)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Order Action Buttons -->
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
+                    <button id="btn-order-buy" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#238636; border-color:#3fb950; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('BUY')">
+                        🟢 BUY (Market)
+                    </button>
+                    <button id="btn-order-sell" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#da3633; border-color:#f85149; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('SELL')">
+                        🔴 SELL (Market)
+                    </button>
+                    <button id="btn-order-buy-limit" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#1f6feb; border-color:#388bfd; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('BUY_LIMIT')">
+                        🔵 BUY LIMIT (Pending)
+                    </button>
+                    <button id="btn-order-sell-limit" type="button" class="engine-btn" style="flex:1; min-width:140px; background:#8957e5; border-color:#a371f7; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeTestOrder('SELL_LIMIT')">
+                        🟣 SELL LIMIT (Pending)
+                    </button>
+                    <button id="btn-order-close-all" type="button" class="engine-btn" style="flex:1.2; min-width:180px; background:#6e40c9; border-color:#8957e5; color:#fff; font-weight:bold; font-size:0.85rem; padding:12px; cursor:pointer;" onclick="executeCloseAllPositions()">
+                        🛑 CLOSE ALL & CANCEL ORDERS
+                    </button>
+                </div>
+
+                <!-- Real-time Terminal Execution Receipt Output -->
+                <div style="background:#090d13; border:1px solid #30363d; border-radius:6px; padding:12px; font-family:'Courier New', Courier, monospace; font-size:0.8rem; color:#8b949e; max-height:160px; overflow-y:auto;" id="test-pad-log">
+                    <div style="color:#58a6ff;">[SYSTEM] Simulation & Order Test Pad initialized. Siap menguji pengiriman sinyal Python Brain $\rightarrow$ MT5.</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Modal Tambah Akun -->
         <div id="add-acc-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:99999; align-items:center; justify-content:center;">
             <div class="login-card" style="max-width:500px;">
@@ -2454,24 +2546,28 @@
                 if (btnAcc) btnAcc.classList.add('active');
                 if (paneAcc) paneAcc.style.display = 'block';
                 loadAccountsDashboard();
-            } else if (tab === 'RADAR') {
-                if (btnRad) btnRad.classList.add('active');
-                if (paneRad) paneRad.style.display = 'block';
-                setTimeout(() => {
-                    startRadar();
-                }, 60);
-            } else if (tab === 'PORTFOLIOS') {
-                if (btnPort) btnPort.classList.add('active');
-                if (panePort) panePort.style.display = 'block';
-                selectPortfolioView('sweet_spot');
-            } else if (tab === 'ANALYTICS') {
-                if (btnAna) btnAna.classList.add('active');
-                if (paneAna) paneAna.style.display = 'block';
-                resizeCanvases();
-                drawChart();
-            } else if (tab === 'PROFILES') {
-                if (btnPro) btnPro.classList.add('active');
-                if (panePro) panePro.style.display = 'block';
+                startAccountsPolling();
+            } else {
+                stopAccountsPolling();
+                if (tab === 'RADAR') {
+                    if (btnRad) btnRad.classList.add('active');
+                    if (paneRad) paneRad.style.display = 'block';
+                    setTimeout(() => {
+                        startRadar();
+                    }, 60);
+                } else if (tab === 'PORTFOLIOS') {
+                    if (btnPort) btnPort.classList.add('active');
+                    if (panePort) panePort.style.display = 'block';
+                    selectPortfolioView('sweet_spot');
+                } else if (tab === 'ANALYTICS') {
+                    if (btnAna) btnAna.classList.add('active');
+                    if (paneAna) paneAna.style.display = 'block';
+                    resizeCanvases();
+                    drawChart();
+                } else if (tab === 'PROFILES') {
+                    if (btnPro) btnPro.classList.add('active');
+                    if (panePro) panePro.style.display = 'block';
+                }
             }
         }
 
@@ -2739,6 +2835,173 @@
         }
 
         // =============================================================
+        // MT5 DIRECT ORDER EXECUTION & SIMULATION TEST PAD JAVASCRIPT
+        // =============================================================
+        let lastLoggedReceiptId = null;
+        let accountsPollTimer = null;
+
+        function startAccountsPolling() {
+            if (accountsPollTimer) clearInterval(accountsPollTimer);
+            fetchRadarData();
+            accountsPollTimer = setInterval(fetchRadarData, 1500);
+        }
+
+        function stopAccountsPolling() {
+            if (accountsPollTimer) {
+                clearInterval(accountsPollTimer);
+                accountsPollTimer = null;
+            }
+        }
+
+        function logTestPad(msg, color = '#c9d1d9') {
+            const el = document.getElementById('test-pad-log');
+            if (!el) return;
+            const now = new Date().toTimeString().slice(0, 8);
+            const line = document.createElement('div');
+            line.style.color = color;
+            line.style.marginTop = '4px';
+            line.innerHTML = `<span style="color:#8b949e;">[${now}]</span> ${msg}`;
+            el.appendChild(line);
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function fillLimitPrice(mode) {
+            const priceInput = document.getElementById('test-order-price');
+            const tick = (radarLastData && radarLastData.tick) ? radarLastData.tick : null;
+            if (!tick || !tick.bid || !tick.ask) {
+                alert('Live price belum tersedia dari MT5 stream. Masukkan harga limit secara manual.');
+                return;
+            }
+            if (mode === 'BID_MINUS') {
+                const target = Math.floor((Number(tick.bid) - 2.0) * 100) / 100;
+                priceInput.value = target.toFixed(2);
+                logTestPad(`Limit price diatur ke: $${target.toFixed(2)} (-$2.00 di bawah Bid $${Number(tick.bid).toFixed(2)})`, '#58a6ff');
+            } else if (mode === 'ASK_PLUS') {
+                const target = Math.ceil((Number(tick.ask) + 2.0) * 100) / 100;
+                priceInput.value = target.toFixed(2);
+                logTestPad(`Limit price diatur ke: $${target.toFixed(2)} (+$2.00 di atas Ask $${Number(tick.ask).toFixed(2)})`, '#d2a8ff');
+            }
+        }
+
+        async function executeTestOrder(side) {
+            const symbol = (document.getElementById('test-order-symbol').value || 'XAUUSD').toUpperCase().trim();
+            const lots = parseFloat(document.getElementById('test-order-lots').value || 0.01);
+            const priceVal = document.getElementById('test-order-price').value.trim();
+            const price = priceVal ? parseFloat(priceVal) : 0.0;
+            const slVal = document.getElementById('test-order-sl').value.trim();
+            const sl = slVal ? parseFloat(slVal) : 0.0;
+            const tpVal = document.getElementById('test-order-tp').value.trim();
+            const tp = tpVal ? parseFloat(tpVal) : 0.0;
+            const magic = parseInt(document.getElementById('test-order-magic').value || 9999);
+
+            if (isNaN(lots) || lots <= 0) {
+                alert('Lot size harus lebih dari 0.00!');
+                return;
+            }
+
+            if ((side === 'BUY_LIMIT' || side === 'SELL_LIMIT') && price <= 0) {
+                alert(`Untuk order ${side}, kolom LIMIT PRICE wajib diisi! Gunakan tombol bantuan di atas atau masukkan harga manual.`);
+                return;
+            }
+
+            const btnId = 'btn-order-' + side.toLowerCase().replace('_', '-');
+            const btn = document.getElementById(btnId);
+            const origText = btn ? btn.innerText : '';
+            if (btn) { btn.disabled = true; btn.innerText = '🚀 Firing...'; }
+
+            const priceNote = (price > 0) ? ` @ $${price.toFixed(2)}` : ' @ Market';
+            logTestPad(`🚀 <strong>[DISPATCH]</strong> Firing sinyal <strong>${side}</strong> ${lots} lots ${symbol}${priceNote} (Magic: ${magic}) ke Python Brain...`, '#58a6ff');
+
+            try {
+                const res = await fetch('/api/order/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + currentAuthToken
+                    },
+                    body: JSON.stringify({
+                        symbol, side, lots, price, sl, tp, magic,
+                        comment: 'Pad_' + side.slice(0, 4)
+                    })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    logTestPad(`📡 <strong>[PYTHON BRAIN]</strong> Order diterima oleh Bridge! Mengirim payload TCP socket ke MT5...`, '#79c0ff');
+                    pollOrderReceipt(8);
+                } else {
+                    logTestPad(`❌ <strong>[ERROR]</strong> Gagal dispatch order: ${data.message || 'Unknown error'}`, '#f85149');
+                }
+            } catch (err) {
+                logTestPad(`❌ <strong>[NETWORK ERROR]</strong> Gagal mengirim ke dashboard server: ${err.message}`, '#f85149');
+            } finally {
+                setTimeout(() => {
+                    if (btn) { btn.disabled = false; btn.innerText = origText; }
+                }, 1000);
+            }
+        }
+
+        async function executeCloseAllPositions() {
+            if (!confirm('Yakin ingin MENUTUP SEMUA POSISI AKTIF & MEMBATALKAN SEMUA PENDING ORDER di MT5?')) return;
+
+            const btn = document.getElementById('btn-order-close-all');
+            const origText = btn ? btn.innerText : '';
+            if (btn) { btn.disabled = true; btn.innerText = '🛑 Closing All...'; }
+
+            logTestPad(`🛑 <strong>[DISPATCH]</strong> Mengirim sinyal <strong>CLOSE_ALL</strong> dari Python Brain ke MT5...`, '#f85149');
+
+            try {
+                const res = await fetch('/api/order/close_all', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + currentAuthToken
+                    },
+                    body: JSON.stringify({ symbol: '', magic: 0 })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    logTestPad(`📡 <strong>[PYTHON BRAIN]</strong> Sinyal CLOSE_ALL disiarkan ke MT5 Bridge!`, '#d2a8ff');
+                    pollOrderReceipt(8);
+                } else {
+                    logTestPad(`❌ <strong>[ERROR]</strong> Gagal close all: ${data.message}`, '#f85149');
+                }
+            } catch (err) {
+                logTestPad(`❌ <strong>[NETWORK ERROR]</strong> Gagal: ${err.message}`, '#f85149');
+            } finally {
+                setTimeout(() => {
+                    if (btn) { btn.disabled = false; btn.innerText = origText; }
+                }, 1200);
+            }
+        }
+
+        function pollOrderReceipt(remainingAttempts) {
+            if (remainingAttempts <= 0) return;
+            setTimeout(async () => {
+                try {
+                    const res = await fetch('/api/order/receipt');
+                    const data = await res.json();
+                    if (data && data.status === 'ok' && data.receipt) {
+                        const r = data.receipt;
+                        const receiptId = (r.ticket || '') + '_' + (r.deal || '') + '_' + (r.action || '') + '_' + (r.closed_positions || '') + '_' + (r.deleted_orders || '');
+                        if (receiptId !== lastLoggedReceiptId) {
+                            lastLoggedReceiptId = receiptId;
+                            if (r.action === 'CLOSE_ALL') {
+                                logTestPad(`✅ <strong>[MT5 RECEIPT]</strong> CLOSE_ALL Berhasil! Posisi Ditutup: ${r.closed_positions || 0} | Pending Order Dibatalkan: ${r.deleted_orders || 0}`, '#3fb950');
+                            } else if (r.success) {
+                                logTestPad(`✅ <strong>[MT5 RECEIPT]</strong> Order Berhasil Dieksekusi MT5! Ticket: #${r.ticket} | Harga: $${Number(r.price).toFixed(2)} | Retcode: ${r.retcode} (${r.retcode_desc || 'Done'})`, '#3fb950');
+                            } else {
+                                logTestPad(`⚠️ <strong>[MT5 REJECTED]</strong> Order Ditolak Broker MT5: Retcode ${r.retcode} (${r.retcode_desc || 'Order rejected'})`, '#f85149');
+                            }
+                            if (typeof loadAccountsDashboard === 'function') loadAccountsDashboard();
+                            return;
+                        }
+                    }
+                } catch (e) {}
+                pollOrderReceipt(remainingAttempts - 1);
+            }, 500);
+        }
+
+        // =============================================================
         // TAB 5: TACTICAL RADAR & LIVE SETUP HUNTING HUD JAVASCRIPT
         // =============================================================
         let radarChart = null;
@@ -2941,6 +3204,22 @@
                 } else {
                     elBridgePill.style.background = '#9e6a03';
                     elBridgeText.innerText = 'Bridge Standby / Parquet Replay';
+                }
+            }
+
+            // Update Test Pad Price References & Status
+            const padBid = document.getElementById('pad-live-bid');
+            const padAsk = document.getElementById('pad-live-ask');
+            const padSpread = document.getElementById('pad-live-spread');
+            const padConn = document.getElementById('test-pad-conn');
+            if (padBid && tick.bid) padBid.innerText = 'Bid: $' + Number(tick.bid).toFixed(2);
+            if (padAsk && tick.ask) padAsk.innerText = 'Ask: $' + Number(tick.ask).toFixed(2);
+            if (padSpread && tick.spread !== undefined) padSpread.innerText = '$' + Number(tick.spread).toFixed(2);
+            if (padConn) {
+                if (data.status === 'LIVE_STREAMING') {
+                    padConn.innerHTML = '<span style="color:#3fb950; font-weight:bold;">🟢 MT5 Streaming Live</span>';
+                } else {
+                    padConn.innerHTML = '<span style="color:#e3b341; font-weight:bold;">🟡 Standby / Disconnected</span>';
                 }
             }
 

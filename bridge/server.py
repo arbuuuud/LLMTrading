@@ -431,6 +431,8 @@ class LiveBridgeServer:
 
         self.radar_state_path = REPORTS_DIR / "radar_state.json"
         self._last_radar_save = 0.0
+        self.latest_order_receipt: Optional[Dict[str, Any]] = None
+        self._ipc_task: Optional[asyncio.Task] = None
 
     def _reload_accounts_config(self):
         try:
@@ -482,6 +484,8 @@ class LiveBridgeServer:
         logger.info(f"🏹 Priority 2 Intraday: M15 SMC Expansion + Callisto BE (Magic: 2001)")
         logger.info("=" * 80)
 
+        self._ipc_task = asyncio.create_task(self._poll_ipc_commands())
+
         self.server = await asyncio.start_server(self._handle_client, self.host, self.port)
         logger.info(f"Bridge Server listening on {self.host}:{self.port}. Waiting for MT5 EA connection...")
 
@@ -490,6 +494,8 @@ class LiveBridgeServer:
 
     async def stop(self):
         self.running = False
+        if self._ipc_task and not self._ipc_task.done():
+            self._ipc_task.cancel()
         if self.client_writer:
             self.client_writer.close()
             await self.client_writer.wait_closed()
@@ -497,6 +503,43 @@ class LiveBridgeServer:
             self.server.close()
             await self.server.wait_closed()
         logger.info("Bridge Server stopped.")
+
+    async def _poll_ipc_commands(self):
+        """Continuously polls for IPC commands from dashboard server without waiting for ticks."""
+        while self.running:
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                if cmd_file.exists():
+                    try:
+                        with open(cmd_file, "r") as f:
+                            cmd_data = json.load(f)
+                        cmd_file.unlink(missing_ok=True)
+                        action = cmd_data.get("action")
+                        if action == "FORCE_SYNC":
+                            await self.request_force_sync(reason=cmd_data.get("reason", "Dashboard Force-Sync Button"))
+                        elif action == "ORDER":
+                            symbol = str(cmd_data.get("symbol", "XAUUSD")).upper()
+                            side = str(cmd_data.get("side", "BUY")).upper()
+                            lots = float(cmd_data.get("lots", 0.01))
+                            price = float(cmd_data.get("price", 0.0) or 0.0)
+                            sl = float(cmd_data.get("sl", 0.0) or 0.0)
+                            tp = float(cmd_data.get("tp", 0.0) or 0.0)
+                            magic = int(cmd_data.get("magic", 9999))
+                            comment = str(cmd_data.get("comment", "Manual_Test_Pad"))
+                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched {side} {lots} lots on {symbol} (Price: {price}, SL: {sl}, TP: {tp}, Magic: {magic})")
+                            await self.send_order(symbol=symbol, side=side, lots=lots, sl=sl, tp=tp, price=price, comment=comment, magic=magic)
+                        elif action == "CLOSE_ALL":
+                            symbol = str(cmd_data.get("symbol", "")).upper()
+                            magic = int(cmd_data.get("magic", 0))
+                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched CLOSE_ALL (Symbol: '{symbol}', Magic: {magic})")
+                            await self.send_close_all(symbol=symbol, magic=magic)
+                    except Exception as e:
+                        logger.error(f"[Bridge] IPC command processing error: {e}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"[Bridge] IPC loop error: {e}")
+            await asyncio.sleep(0.1)
 
     async def request_force_sync(self, reason: str = "Integrity Check") -> bool:
         if not self.client_writer:
@@ -589,10 +632,18 @@ class LiveBridgeServer:
             await self._handle_tick(msg)
         elif msg_type == "ORDER_RECEIPT":
             logger.info(
-                f"[ORDER FILL RECEIPT] {msg.get('symbol')} {msg.get('side')} "
-                f"Lots: {msg.get('lots')} | Success: {msg.get('success')} | "
-                f"Ticket: {msg.get('ticket')} | Magic: {msg.get('magic')} | Price: {msg.get('price')}"
+                f"[ORDER RECEIPT] Side/Action: {msg.get('side', msg.get('action'))} | "
+                f"Symbol: {msg.get('symbol')} | Lots: {msg.get('lots', 0)} | "
+                f"Success: {msg.get('success')} | Ticket: {msg.get('ticket', 0)} | "
+                f"Price: {msg.get('price', 0)} | Retcode: {msg.get('retcode')} ({msg.get('retcode_desc', '')})"
             )
+            self.latest_order_receipt = msg
+            try:
+                receipt_file = REPORTS_DIR / "order_receipt.json"
+                with open(receipt_file, "w") as f:
+                    json.dump(msg, f, indent=2)
+            except Exception:
+                pass
             self._save_radar_state()
 
     async def _handle_bar_sync(self, msg: Dict[str, Any]):
@@ -664,21 +715,6 @@ class LiveBridgeServer:
         open_pos = int(tick.get("open_positions", 0))
         acc_id = str(tick.get("account_id", self.active_account_id))
         self.active_account_id = acc_id
-
-        # Check IPC command from dashboard (e.g. force sync button)
-        now_t = time.time()
-        if now_t - self._last_ipc_check >= 0.5:
-            self._last_ipc_check = now_t
-            cmd_file = REPORTS_DIR / "bridge_command.json"
-            if cmd_file.exists():
-                try:
-                    with open(cmd_file, "r") as f:
-                        cmd_data = json.load(f)
-                    cmd_file.unlink(missing_ok=True)
-                    if cmd_data.get("action") == "FORCE_SYNC":
-                        await self.request_force_sync(reason="Dashboard Force-Sync Button")
-                except Exception as e:
-                    logger.debug(f"[Bridge] IPC command check error: {e}")
 
         # Check gap detected in aggregator
         if getattr(self.aggregator, "gap_detected", False):
@@ -795,8 +831,9 @@ class LiveBridgeServer:
         symbol: str,
         side: str,
         lots: float,
-        sl: float,
-        tp: float,
+        sl: float = 0.0,
+        tp: float = 0.0,
+        price: float = 0.0,
         comment: str = "LLM_AI",
         magic: int = 1001
     ) -> bool:
@@ -804,11 +841,12 @@ class LiveBridgeServer:
             "action": "ORDER",
             "symbol": symbol,
             "side": side.upper(),
-            "lots": lots,
-            "sl": round(sl, 2),
-            "tp": round(tp, 2),
+            "lots": float(lots),
+            "price": round(float(price), 2) if price else 0.0,
+            "sl": round(float(sl), 2) if sl else 0.0,
+            "tp": round(float(tp), 2) if tp else 0.0,
             "comment": comment,
-            "magic": magic
+            "magic": int(magic)
         }
 
         if self.dry_run:
@@ -825,17 +863,21 @@ class LiveBridgeServer:
         logger.info(f"[DISPATCH TO MT5] Sent live order command: {payload.strip()}")
         return True
 
-    async def send_close_all(self, symbol: str = "", magic: int = 0):
-        cmd = {"action": "CLOSE_ALL", "symbol": symbol, "magic": magic}
+    async def send_close_all(self, symbol: str = "", magic: int = 0) -> bool:
+        cmd = {"action": "CLOSE_ALL", "symbol": symbol, "magic": int(magic)}
         if self.dry_run:
             logger.info(f"[PAPER TRADE DRY-RUN] Close Positions: {cmd}")
-            return
+            return True
 
-        if self.client_writer:
-            payload = json.dumps(cmd) + "\n"
-            self.client_writer.write(payload.encode("utf-8"))
-            await self.client_writer.drain()
-            logger.info(f"[DISPATCH TO MT5] Sent close command: {payload.strip()}")
+        if not self.client_writer:
+            logger.warning("[Bridge] Cannot send CLOSE_ALL: MT5 not connected.")
+            return False
+
+        payload = json.dumps(cmd) + "\n"
+        self.client_writer.write(payload.encode("utf-8"))
+        await self.client_writer.drain()
+        logger.info(f"[DISPATCH TO MT5] Sent close command: {payload.strip()}")
+        return True
 
     def build_radar_payload(self) -> Dict[str, Any]:
         latest_tick = self.latest_tick or {}
@@ -1073,6 +1115,7 @@ class LiveBridgeServer:
                 "risk_dollar": risk_dollar,
                 "estimated_lot": est_lots
             },
+            "latest_order_receipt": self.latest_order_receipt,
             "engine_1": {
                 "name": "M1 Session Anchored VWAP Scalper",
                 "magic": 1001,
