@@ -5,10 +5,11 @@ true statistical robustness, risk of ruin, and worst-case 95% drawdown confidenc
 """
 
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import numpy as np
 
-from engine.core.types import TradeRecord
+# Avoid circular imports with engine.core
+TradeRecord = Any
 
 
 @dataclass
