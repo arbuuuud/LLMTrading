@@ -439,13 +439,77 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             body = {}
 
-        # 1. Login Endpoint
+        # 1. Direct Control Endpoints (Force Sync & Manual Test Pad)
         if path == "/api/force_sync":
             try:
                 cmd_file = REPORTS_DIR / "bridge_command.json"
                 with open(cmd_file, "w") as f:
                     json.dump({"action": "FORCE_SYNC", "timestamp": time.time()}, f)
                 return self._send_json({"status": "ok", "message": "Force sync command dispatched to Python Bridge"})
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
+        elif path == "/api/order/test":
+            symbol = str(body.get("symbol", "XAUUSD")).upper().strip()
+            side = str(body.get("side", "BUY")).upper().strip()
+            if side not in ("BUY", "SELL", "BUY_LIMIT", "SELL_LIMIT"):
+                return self._send_json({"status": "error", "message": f"Invalid order side: {side}"}, 400)
+
+            try:
+                lots = float(body.get("lots", 0.01))
+                if lots <= 0:
+                    return self._send_json({"status": "error", "message": "Lot size must be greater than 0"}, 400)
+            except (ValueError, TypeError):
+                return self._send_json({"status": "error", "message": "Invalid lot size"}, 400)
+
+            price = float(body.get("price", 0.0) or 0.0)
+            sl = float(body.get("sl", 0.0) or 0.0)
+            tp = float(body.get("tp", 0.0) or 0.0)
+            magic = int(body.get("magic", 9999) or 9999)
+            comment = str(body.get("comment", "Manual_Test_Pad"))[:31]
+
+            cmd_data = {
+                "action": "ORDER",
+                "symbol": symbol,
+                "side": side,
+                "lots": lots,
+                "price": price,
+                "sl": sl,
+                "tp": tp,
+                "magic": magic,
+                "comment": comment,
+                "timestamp": time.time()
+            }
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump(cmd_data, f)
+                return self._send_json({
+                    "status": "ok",
+                    "message": f"Test {side} order ({lots} lots) dispatched from Python Brain to MT5",
+                    "command": cmd_data
+                })
+            except Exception as e:
+                return self._send_json({"status": "error", "message": str(e)}, 500)
+
+        elif path == "/api/order/close_all":
+            symbol = str(body.get("symbol", "")).upper().strip()
+            magic = int(body.get("magic", 0) or 0)
+            cmd_data = {
+                "action": "CLOSE_ALL",
+                "symbol": symbol,
+                "magic": magic,
+                "timestamp": time.time()
+            }
+            try:
+                cmd_file = REPORTS_DIR / "bridge_command.json"
+                with open(cmd_file, "w") as f:
+                    json.dump(cmd_data, f)
+                return self._send_json({
+                    "status": "ok",
+                    "message": "CLOSE_ALL command dispatched from Python Brain to MT5",
+                    "command": cmd_data
+                })
             except Exception as e:
                 return self._send_json({"status": "error", "message": str(e)}, 500)
 
@@ -567,73 +631,7 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
                 return self._send_json({"success": True, "message": f"Akun {account_id} dihapus."})
             return self._send_json({"error": "Account not found"}, 404)
 
-        # 5. Manual Test Pad - Order Execution
-        elif path == "/api/order/test":
-            symbol = str(body.get("symbol", "XAUUSD")).upper().strip()
-            side = str(body.get("side", "BUY")).upper().strip()
-            if side not in ("BUY", "SELL", "BUY_LIMIT", "SELL_LIMIT"):
-                return self._send_json({"status": "error", "message": f"Invalid order side: {side}"}, 400)
-
-            try:
-                lots = float(body.get("lots", 0.01))
-                if lots <= 0:
-                    return self._send_json({"status": "error", "message": "Lot size must be greater than 0"}, 400)
-            except (ValueError, TypeError):
-                return self._send_json({"status": "error", "message": "Invalid lot size"}, 400)
-
-            price = float(body.get("price", 0.0) or 0.0)
-            sl = float(body.get("sl", 0.0) or 0.0)
-            tp = float(body.get("tp", 0.0) or 0.0)
-            magic = int(body.get("magic", 9999) or 9999)
-            comment = str(body.get("comment", "Manual_Test_Pad"))[:31]
-
-            cmd_data = {
-                "action": "ORDER",
-                "symbol": symbol,
-                "side": side,
-                "lots": lots,
-                "price": price,
-                "sl": sl,
-                "tp": tp,
-                "magic": magic,
-                "comment": comment,
-                "timestamp": time.time()
-            }
-            try:
-                cmd_file = REPORTS_DIR / "bridge_command.json"
-                with open(cmd_file, "w") as f:
-                    json.dump(cmd_data, f)
-                return self._send_json({
-                    "status": "ok",
-                    "message": f"Test {side} order ({lots} lots) dispatched from Python Brain to MT5",
-                    "command": cmd_data
-                })
-            except Exception as e:
-                return self._send_json({"status": "error", "message": str(e)}, 500)
-
-        # 6. Manual Test Pad - Close All Positions & Orders
-        elif path == "/api/order/close_all":
-            symbol = str(body.get("symbol", "")).upper().strip()
-            magic = int(body.get("magic", 0) or 0)
-            cmd_data = {
-                "action": "CLOSE_ALL",
-                "symbol": symbol,
-                "magic": magic,
-                "timestamp": time.time()
-            }
-            try:
-                cmd_file = REPORTS_DIR / "bridge_command.json"
-                with open(cmd_file, "w") as f:
-                    json.dump(cmd_data, f)
-                return self._send_json({
-                    "status": "ok",
-                    "message": "CLOSE_ALL command dispatched from Python Brain to MT5",
-                    "command": cmd_data
-                })
-            except Exception as e:
-                return self._send_json({"status": "error", "message": str(e)}, 500)
-
-        # 7. Logout Endpoint
+        # 5. Logout Endpoint
         elif path == "/api/logout":
             if token in ACTIVE_SESSIONS:
                 del ACTIVE_SESSIONS[token]

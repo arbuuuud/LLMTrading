@@ -40,10 +40,18 @@ int OnInit()
 {
    m_trade.SetExpertMagicNumber(1001);
    m_trade.SetDeviationInPoints(InpDeviationPoints);
-   m_trade.SetTypeFilling(ORDER_FILLING_IOC);
 
-   PrintFormat("[LLM Bridge] Initialized. Account: %I64d (%s). Brain: %s:%d",
-               AccountInfoInteger(ACCOUNT_LOGIN), AccountInfoString(ACCOUNT_COMPANY), InpServerHost, InpServerPort);
+   // Configure dynamic filling mode based on broker/symbol capabilities
+   uint filling = (uint)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) != 0)
+      m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+   else if((filling & SYMBOL_FILLING_IOC) != 0)
+      m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+   else
+      m_trade.SetTypeFilling(ORDER_FILLING_RETURN);
+
+   PrintFormat("[LLM Bridge] Initialized. Account: %I64d (%s). Brain: %s:%d (Filling: %d)",
+               AccountInfoInteger(ACCOUNT_LOGIN), AccountInfoString(ACCOUNT_COMPANY), InpServerHost, InpServerPort, (int)m_trade.TypeFilling());
    
    ConnectToServer();
    EventSetTimer(1); // 1-second timer
@@ -215,17 +223,14 @@ void PollIncomingCommands()
    if(!m_connected || m_socket == INVALID_HANDLE)
       return;
 
-   uint readable = SocketIsReadable(m_socket);
-   if(readable > 0)
+   // Direct non-blocking socket read with 5ms timeout (robust across Wine/macOS/Windows)
+   uchar buffer[];
+   ArrayResize(buffer, 4096);
+   int received = SocketRead(m_socket, buffer, 4096, 5);
+   if(received > 0)
    {
-      uchar buffer[];
-      ArrayResize(buffer, readable + 32);
-      int received = SocketRead(m_socket, buffer, readable, InpTimeoutMs);
-      if(received > 0)
-      {
-         string chunk = CharArrayToString(buffer, 0, received, CP_UTF8);
-         m_incoming_buffer += chunk;
-      }
+      string chunk = CharArrayToString(buffer, 0, received, CP_UTF8);
+      m_incoming_buffer += chunk;
    }
 
    // Process complete newline-delimited JSON commands from stream buffer
@@ -239,6 +244,7 @@ void PollIncomingCommands()
       StringTrimRight(line);
       if(line != "")
       {
+         PrintFormat("[LLM Bridge] Received command from Python: %s", line);
          ProcessCommand(line);
       }
    }
@@ -307,19 +313,52 @@ void ProcessCommand(string cmdJson)
       if(comment == "") comment = "LLM_AI_Trade";
       if(magic <= 0) magic = (long)InpMagicNumber;
 
+      // 1. Check Terminal Algo Trading Master Switch
+      if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+      {
+         string receipt = StringFormat(
+            "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":false,\"ticket\":0,\"retcode\":10027,\"retcode_desc\":\"Algo Trading is DISABLED in MT5 toolbar! Click Algo Trading button.\",\"price\":0.0,\"magic\":%I64u}\n",
+            symbol, side, lots, (ulong)magic
+         );
+         SendString(receipt);
+         Print("[LLM Bridge] ❌ ORDER REJECTED: Algo Trading button in MT5 toolbar is turned OFF! (Retcode: 10027)");
+         return;
+      }
+
+      // 2. Check EA Automated Trading Permission
+      if(!MqlInfoInteger(MQL_TRADE_ALLOWED))
+      {
+         string receipt = StringFormat(
+            "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":false,\"ticket\":0,\"retcode\":10026,\"retcode_desc\":\"EA Automated Trading not allowed! Check 'Allow Algo Trading' in EA properties.\",\"price\":0.0,\"magic\":%I64u}\n",
+            symbol, side, lots, (ulong)magic
+         );
+         SendString(receipt);
+         Print("[LLM Bridge] ❌ ORDER REJECTED: 'Allow Algo Trading' is not checked in EA properties! (Retcode: 10026)");
+         return;
+      }
+
       m_trade.SetExpertMagicNumber((ulong)magic);
+
+      // 3. Set proper filling mode for this symbol
+      uint symFilling = (uint)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+      if((symFilling & SYMBOL_FILLING_FOK) != 0)
+         m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+      else if((symFilling & SYMBOL_FILLING_IOC) != 0)
+         m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+      else
+         m_trade.SetTypeFilling(ORDER_FILLING_RETURN);
 
       bool success = false;
       if(side == "BUY")
       {
-         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
-         double execPrice = (price > 0.0) ? price : ask;
+         // For market execution, 0.0 allows CTrade to fetch current ask automatically
+         double execPrice = (price > 0.0) ? price : 0.0;
          success = m_trade.Buy(lots, symbol, execPrice, sl, tp, comment);
       }
       else if(side == "SELL")
       {
-         double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
-         double execPrice = (price > 0.0) ? price : bid;
+         // For market execution, 0.0 allows CTrade to fetch current bid automatically
+         double execPrice = (price > 0.0) ? price : 0.0;
          success = m_trade.Sell(lots, symbol, execPrice, sl, tp, comment);
       }
       else if(side == "BUY_LIMIT")
