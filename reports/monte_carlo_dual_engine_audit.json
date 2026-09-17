@@ -1,0 +1,34 @@
+{
+  "generated_at": "2026-09-17 22:21:50",
+  "simulations": 1000,
+  "engine_1": {
+    "trades": 499,
+    "median_final_equity": 12626.29,
+    "p05_worst_equity": 10002.63,
+    "p95_best_equity": 15311.91,
+    "median_max_dd": 9.45,
+    "p95_max_dd": 18.06,
+    "ruin_probability_pct": 1.0,
+    "passed": false
+  },
+  "engine_2": {
+    "trades": 237,
+    "median_final_equity": 16150.0,
+    "p05_worst_equity": 12850.0,
+    "p95_best_equity": 19450.0,
+    "median_max_dd": 6.69,
+    "p95_max_dd": 12.56,
+    "ruin_probability_pct": 0.1,
+    "passed": true
+  },
+  "combined_portfolio": {
+    "trades": 736,
+    "median_final_equity": 18902.79,
+    "p05_worst_equity": 14573.64,
+    "p95_best_equity": 23039.22,
+    "median_max_dd": 8.31,
+    "p95_max_dd": 15.51,
+    "ruin_probability_pct": 0.0,
+    "passed": true
+  }
+}
