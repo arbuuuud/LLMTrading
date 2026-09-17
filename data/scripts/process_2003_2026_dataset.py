@@ -79,11 +79,13 @@ def process_dataset():
 
     # HTF Resampling Matrix
     resample_specs = [
-        ("M5", "5m", "Phase 2/6"),
-        ("M15", "15m", "Phase 3/6"),
-        ("H1", "1h", "Phase 4/6"),
-        ("H4", "4h", "Phase 5/6"),
-        ("D1", "1d", "Phase 6/6"),
+        ("M2", "2m", "Phase 2/8"),
+        ("M3", "3m", "Phase 3/8"),
+        ("M5", "5m", "Phase 4/8"),
+        ("M15", "15m", "Phase 5/8"),
+        ("H1", "1h", "Phase 6/8"),
+        ("H4", "4h", "Phase 7/8"),
+        ("D1", "1d", "Phase 8/8"),
     ]
 
     for tf_name, duration_str, phase_label in resample_specs:

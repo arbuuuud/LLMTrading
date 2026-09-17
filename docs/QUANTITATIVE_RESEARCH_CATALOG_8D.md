@@ -83,7 +83,13 @@ Kini, dengan tersedianya **Dataset M1 Historis 23,3 Tahun (2003–2026)** sebesa
    * *Rule:* Order Buy hanya sah jika harga berada di atas EMA, dan Order Sell hanya sah jika harga di bawah EMA.
 4. **Parabolic Runaway Buffer Guard:**
    * Jika harga melesat melebihi $\$15.00$ atau $\$20.00$ dari H1 EMA 50, pasar dinyatakan dalam kondisi *Parabolic Expansion* (kereta ekspres). Seluruh entry counter-trend otomatis **DIBLOKIR** untuk menghindari *whipsaw squeeze*.
-5. **Market Structure Shifts (SMC):**
+5. **Hierarki Korelasi Multi-Timeframe (MTF Confluence Hierarchy):**
+   * **Macro Bias (H4 & H1):** Menentukan arah kompas utama dan zona likuiditas mayor.
+   * **Structure & Base Zone (M15 & M5):** Menentukan lokasi formasi base (RBR/DBD/DBR/RBD) dan equilibrium pasar.
+   * **Fractal Intermediate Sweet-Spot (M3 & M2):** Menyaring noise sumbu palsu dari M1 tanpa kehilangan kecepatan entri yang sering terlambat di M5.
+   * **Micro Execution Trigger (M1):** Penentuan momen presisi (:00 detik) untuk entry.
+   * *Kage Bunshin Matrix:* Menguji apakah korelasi 4-lapis (`H4 -> H1 -> M15 -> M2/M3`) memberikan *Sharpe Ratio* lebih tinggi daripada eksekusi murni single-timeframe M1.
+6. **Market Structure Shifts (SMC):**
    * **BOS (Break of Structure):** Penembusan swing high/low yang mengonfirmasi tren sedang berlanjut.
    * **ChoCH (Change of Character):** Penembusan struktur berlawanan pertama yang memberi peringatan awal pembalikan arah bias.
 
@@ -93,10 +99,18 @@ Kini, dengan tersedianya **Dataset M1 Historis 23,3 Tahun (2003–2026)** sebesa
 *Menentukan zona harga spesifik di mana institusi meninggalkan jejak pesanan besar (Unfilled Orders).*
 
 1. **Nusantara FX (NFC - Fadli & Dwiyan Anggara) Auction & UFO Engine:**
-   * **DBR (Drop-Base-Rally):** Demand Reversal yang sangat kuat saat harga memantul dari titik jenuh.
-   * **RBR (Rally-Base-Rally):** Demand Continuation saat tren kuat berlanjut.
-   * **RBD (Rally-Base-Drop):** Supply Reversal dari puncak harga.
-   * **DBD (Drop-Base-Drop):** Supply Continuation saat aksi jual berlanjut.
+   * **Continuation Bases:**
+     - **RBR (Rally-Base-Rally):** Demand continuation saat tren bullish meledak.
+     - **DBD (Drop-Base-Drop):** Supply continuation saat aksi jual deras berlanjut.
+   * **Reversal Bases:**
+     - **DBR (Drop-Base-Rally):** Demand reversal dari titik terendah jenuh jual (*exhaustion bounce*).
+     - **RBD (Rally-Base-Drop):** Supply reversal dari puncak jenuh beli (*exhaustion dump*).
+   * **FTR (Fail to Return / Breakout Base Retest):**
+     - Base kecil yang terbentuk persis saat harga menembus level struktur kunci, lalu harga gagal kembali masuk ke zona lama (*momentum acceptance*).
+   * **Base Quality & Age Decay Rules:**
+     - *Freshness:* Sentuhan pertama (*First Retest*) memiliki probabilitas tertinggi; sentuhan ke-2 dan ke-3 mengalami penurunan kualitas (*depleted liquidity*).
+     - *Base Duration:* Base 1–3 candle memiliki kompresi order lebih padat daripada base > 5 candle.
+     - *Age Expiration:* Base berumur > 24 jam diturunkan skor validitasnya.
 2. **Equilibrium 50% Rule (Auction Acceptance):**
    * Membagi struktur harga menjadi zona Diskon dan Premium.
    * *Strict Rule:* Hanya beli di area **Discount (< 50% Equilibrium)**; Hanya jual di area **Premium (> 50% Equilibrium)**.
@@ -157,7 +171,18 @@ Kini, dengan tersedianya **Dataset M1 Historis 23,3 Tahun (2003–2026)** sebesa
 2. **Mekanisme Eksekusi Stop Loss:**
    * **Model A (Standard Tick-Touch SL):** Posisi langsung ter-stop out seketika saat harga High/Low menyentuh angka SL.
    * **Model B (Bar-Close Confirmation SL / Anti-Wick Hunt):** Posisi hanya ditutup jika bar M1 ditutup menembus level SL. Melindungi posisi dari jarum spread broker yang hanya menusuk sesaat lalu memantul kembali ke arah TP.
-3. **Dynamic Spread Tolerance Filter:**
+3. **Tipe Eksekusi Order (Market Order vs Resting Limit Order):**
+   * **Mode A: Market Order on Bar Close (:00s)**
+     - Menunggu candle M1/M2/M3 selesai, membaca sumbu rejection wick, lalu eksekusi di harga market (Ask/Bid).
+     - *Kelebihan:* Konfirmasi arah nyata, tidak tertabrak pisau jatuh.
+     - *Kekurangan:* Harga sudah memantul menjauh dari dasar/pucuk, SL menjadi lebih lebar ($2.50–$3.50), terkena slippage broker.
+   * **Mode B: Resting Limit Order at Proximal Line (Jaring Institusional Pasif)**
+     - Memasang Limit Order pasif tepat di garis *Proximal* (pucuk luar base RBR/DBD atau level -1.8σ) mendahului harga tanpa menunggu candle selesai.
+     - *Kelebihan:* Mendapat harga diskon absolut, SL super tipis ($0.80–$1.50), Risk:Reward melonjak ke 1:4 s/d 1:5, nol slippage (maker execution).
+     - *Kekurangan:* Risiko tertabrak tren ekspansi liar jika harga menembus tanpa rem.
+   * **Mode C: Confirmed Smart Limit**
+     - Limit order hanya dipasang jika base telah diaudit memiliki skor kualitas institusional tinggi (*Prime Score ≥ 80*).
+4. **Dynamic Spread Tolerance Filter:**
    * Mengganti batas spread statis (\$0.25/\$0.35) dengan batas dinamis moving average:
      $$\text{Max Spread} = \min(0.45, \text{SMA}_{30m}(\text{Spread}) \times 1.4)$$
    * Mencegah sistem macet saat broker melebarkan spread normal ke \$0.32, namun tetap memblokir entry saat terjadi spike berita liar ($> \$0.50$).

@@ -96,13 +96,15 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
 *   **Tujuan**: Mengintegrasikan seluruh hasil riset historis (ATR, Time Window, Market Session, Risk Profile, HTF EMA, POI NFC/ICT, Candlestick Rejection, SMT, Stop Loss Model, Callisto BE) ke dalam satu engine pengujian paralel multi-dimensi.
 *   **8 Dimensi Kuantitatif Terpadu**:
     1.  *Time & Session Filters*: Golden Window 10:30-14:30 vs London 08-11 vs Asia 00-06 vs Rollover Cutoff.
-    2.  *Macro Trend & Market Structure*: Sumbu VWAP Harian + H1 EMA 50/100/H4 + Parabolic Runaway Guard ($15).
-    3.  *Setups & POI*: NFC Unfilled Orders (DBR/RBD/RBR/DBD) + Equilibrium 50% + ICT OB/FVG + Fibo OTE.
-    4.  *Price Action Triggers*: Rejection Wick (≥40-50%) + Color Confirmation + Engulfing + Doji.
-    5.  *SMT Divergence*: Intermarket confirmation (XAUUSD vs Silver XAGUSD / DXY).
-    6.  *Stop Loss & Defense*: Multi-ATR (0.8x - 1.8x) vs Structure Distal SL; Bar-Close Confirmation SL vs Tick SL.
-    7.  *Profit Harvesting*: Callisto Twin 50/50 BE Ratchet vs Fixed 1:2 RR vs VWAP Mean Target.
+    2.  *Macro Trend & Market Structure*: Sumbu VWAP Harian + H1 EMA 50/100/H4 + Parabolic Runaway Guard ($15) + Korelasi Fraktal MTF (H4 -> H1 -> M15 -> M2/M3 sweet spot -> M1).
+    3.  *Setups & POI*: NFC Unfilled Orders (Continuation: RBR/DBD vs Reversal: DBR/RBD vs FTR) + Equilibrium 50% Rule (Discount/Premium) + Base Age Decay & First Retest + ICT OB/FVG + Fibo OTE.
+    4.  *Price Action Triggers*: Rejection Wick (≥40-50%) + Color Confirmation + Engulfing + Doji + Al Brooks H2/L2.
+    5.  *SMT Divergence*: Intermarket confirmation (XAUUSD vs Silver XAGUSD / DXY non-confirmation).
+    6.  *Stop Loss, Defense & Order Execution*: Multi-ATR (0.8x - 1.8x) vs Structure Distal SL; Bar-Close Confirmation SL vs Tick SL; **Market Order on Close vs Resting Limit Order at Proximal Line vs Confirmed Smart Limit**.
+    7.  *Profit Harvesting*: Callisto Twin 50/50 BE Ratchet vs Fixed 1:2 RR vs VWAP Mean Target + Trailing Stop.
     8.  *Risk Governor*: Prop Firm (0.5%), Sweet Spot (0.75%), Bottoming Profit Lock (+1% s/d +3%), 2-Strike Daily Shutdown.
+*   **Timeframe Inventory (2003–2026)**:
+    - M1 (7.93M bars), M2 (4.06M bars), M3 (2.74M bars), M5 (1.66M bars), M15 (561K bars), H1 (141K bars), H4 (37K bars), D1 (7.2K bars).
 *   **Target Output**:
     - Leaderboard Juara Sejati 2003–2026 yang teruji kebal di 6 era pasar emas dunia (2008 Crash, 2013-2018 Bear/Sideways Churn, 2020 COVID, 2024-2026 Bull Run).
 
