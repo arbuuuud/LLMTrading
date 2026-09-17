@@ -857,7 +857,7 @@ class LiveBridgeServer:
             logger.warning("[Bridge] Cannot send order: MT5 not connected.")
             return False
 
-        payload = json.dumps(cmd) + "\n"
+        payload = json.dumps(cmd, separators=(',', ':')) + "\n"
         self.client_writer.write(payload.encode("utf-8"))
         await self.client_writer.drain()
         logger.info(f"[DISPATCH TO MT5] Sent live order command: {payload.strip()}")
@@ -873,7 +873,7 @@ class LiveBridgeServer:
             logger.warning("[Bridge] Cannot send CLOSE_ALL: MT5 not connected.")
             return False
 
-        payload = json.dumps(cmd) + "\n"
+        payload = json.dumps(cmd, separators=(',', ':')) + "\n"
         self.client_writer.write(payload.encode("utf-8"))
         await self.client_writer.drain()
         logger.info(f"[DISPATCH TO MT5] Sent close command: {payload.strip()}")

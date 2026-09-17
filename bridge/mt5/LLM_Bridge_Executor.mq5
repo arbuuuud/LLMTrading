@@ -50,8 +50,8 @@ int OnInit()
    else
       m_trade.SetTypeFilling(ORDER_FILLING_RETURN);
 
-   PrintFormat("[LLM Bridge] Initialized. Account: %I64d (%s). Brain: %s:%d (Filling: %d)",
-               AccountInfoInteger(ACCOUNT_LOGIN), AccountInfoString(ACCOUNT_COMPANY), InpServerHost, InpServerPort, (int)m_trade.TypeFilling());
+   PrintFormat("[LLM Bridge] Initialized. Account: %I64d (%s). Brain: %s:%d",
+               AccountInfoInteger(ACCOUNT_LOGIN), AccountInfoString(ACCOUNT_COMPANY), InpServerHost, InpServerPort);
    
    ConnectToServer();
    EventSetTimer(1); // 1-second timer
@@ -251,25 +251,43 @@ void PollIncomingCommands()
 }
 
 //+------------------------------------------------------------------+
-//| Simple JSON Value Extractor Helper                               |
+//| Robust JSON Value Extractor Helper (Handles spaces & types)       |
 //+------------------------------------------------------------------+
 string ExtractJsonString(string json, string key)
 {
-   string search = "\"" + key + "\":\"";
+   string search = "\"" + key + "\"";
    int pos = StringFind(json, search);
    if(pos < 0) return "";
    pos += StringLen(search);
-   int end = StringFind(json, "\"", pos);
-   if(end < 0) return "";
-   return StringSubstr(json, pos, end - pos);
-}
+   
+   // Skip spaces and locate ':'
+   while(pos < StringLen(json))
+   {
+      ushort ch = StringGetCharacter(json, pos);
+      if(ch == ':') { pos++; break; }
+      pos++;
+   }
+   
+   // Skip whitespace until value starts
+   while(pos < StringLen(json))
+   {
+      ushort ch = StringGetCharacter(json, pos);
+      if(ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') break;
+      pos++;
+   }
 
-double ExtractJsonDouble(string json, string key)
-{
-   string search = "\"" + key + "\":";
-   int pos = StringFind(json, search);
-   if(pos < 0) return 0.0;
-   pos += StringLen(search);
+   if(pos >= StringLen(json)) return "";
+
+   // Check if string is enclosed in quotes
+   if(StringGetCharacter(json, pos) == '\"')
+   {
+      pos++; // skip opening quote
+      int end = StringFind(json, "\"", pos);
+      if(end < 0) return "";
+      return StringSubstr(json, pos, end - pos);
+   }
+
+   // Non-quoted value (number, boolean, or identifier)
    int end = pos;
    while(end < StringLen(json))
    {
@@ -277,7 +295,17 @@ double ExtractJsonDouble(string json, string key)
       if(ch == ',' || ch == '}' || ch == '\n' || ch == '\r') break;
       end++;
    }
-   return StringToDouble(StringSubstr(json, pos, end - pos));
+   string val = StringSubstr(json, pos, end - pos);
+   StringTrimLeft(val);
+   StringTrimRight(val);
+   return val;
+}
+
+double ExtractJsonDouble(string json, string key)
+{
+   string val = ExtractJsonString(json, key);
+   if(val == "") return 0.0;
+   return StringToDouble(val);
 }
 
 //+------------------------------------------------------------------+
@@ -326,7 +354,7 @@ void ProcessCommand(string cmdJson)
       }
 
       // 2. Check EA Automated Trading Permission
-      if(!MqlInfoInteger(MQL_TRADE_ALLOWED))
+      if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
       {
          string receipt = StringFormat(
             "{\"type\":\"ORDER_RECEIPT\",\"symbol\":\"%s\",\"side\":\"%s\",\"lots\":%.2f,\"success\":false,\"ticket\":0,\"retcode\":10026,\"retcode_desc\":\"EA Automated Trading not allowed! Check 'Allow Algo Trading' in EA properties.\",\"price\":0.0,\"magic\":%I64u}\n",
