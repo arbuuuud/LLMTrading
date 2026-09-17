@@ -1078,11 +1078,19 @@ class LiveBridgeServer:
 
         sorted_ts = sorted(bar_dict.keys())
         
-        # Accumulate session VWAP across full available history, anchored by date
+        # Accumulate session VWAP and smooth H1 EMA 50 across full available history
         cum_vol = 0.0
         cum_pv = 0.0
         cum_p2v = 0.0
         cur_date_str = None
+
+        # Continuous H1 EMA 50 equivalent smoothing across M1 bars (alpha for 50 H1 bars = 2 / (50*60 + 1))
+        ema_alpha = 2.0 / (50.0 * 60.0 + 1.0)
+        running_ema = getattr(self.scalper_strategy, "current_macro_ema", None)
+        if (running_ema is None or running_ema <= 0) and sorted_ts:
+            # Seed running EMA from the mean close of earliest available bars
+            first_n = min(30, len(sorted_ts))
+            running_ema = sum(bar_dict[sorted_ts[i]]["close"] for i in range(first_n)) / first_n
         
         full_m1_annotated = []
         for ts in sorted_ts:
@@ -1105,6 +1113,12 @@ class LiveBridgeServer:
             cum_p2v += (tp ** 2) * vol
             v = cum_pv / cum_vol
             s = math.sqrt(max(0.0, (cum_p2v / cum_vol) - (v ** 2)))
+
+            if running_ema is None:
+                running_ema = c
+            else:
+                running_ema = (c * ema_alpha) + (running_ema * (1.0 - ema_alpha))
+
             full_m1_annotated.append({
                 "time": ts,
                 "open": o,
@@ -1114,7 +1128,8 @@ class LiveBridgeServer:
                 "volume": int(vol),
                 "vwap": round(v, 2),
                 "upper": round(v + 1.8 * s, 2),
-                "lower": round(v - 1.8 * s, 2)
+                "lower": round(v - 1.8 * s, 2),
+                "ema": round(running_ema, 2)
             })
 
         bars_m1 = full_m1_annotated[-120:]
@@ -1136,7 +1151,14 @@ class LiveBridgeServer:
         std = round(getattr(self.scalper_strategy, "current_std", 0.0), 2)
         upper = round(getattr(self.scalper_strategy, "upper_band", 0.0), 2)
         lower = round(getattr(self.scalper_strategy, "lower_band", 0.0), 2)
-        ema50 = round(self.scalper_strategy.current_macro_ema, 2) if getattr(self.scalper_strategy, "current_macro_ema", None) else None
+
+        if running_ema is not None and running_ema > 0:
+            ema50 = round(running_ema, 2)
+            self.scalper_strategy.current_macro_ema = ema50
+        elif getattr(self.scalper_strategy, "current_macro_ema", None):
+            ema50 = round(self.scalper_strategy.current_macro_ema, 2)
+        else:
+            ema50 = round(mid, 2) if mid > 0 else 3000.0
 
         # If scalper has not accumulated enough live bars yet, compute from recent M1 bars around live price
         if (vwap == 0.0 or (mid > 0 and abs(vwap - mid) > 30.0)) and bars_m1:
@@ -1144,8 +1166,6 @@ class LiveBridgeServer:
             upper = bars_m1[-1]["upper"]
             lower = bars_m1[-1]["lower"]
             std = round(abs(upper - vwap) / 1.8, 2) if vwap > 0 else 2.5
-        if ema50 is None or (mid > 0 and abs(ema50 - mid) > 30.0):
-            ema50 = round(mid - 1.50, 2) if mid > 0 else 4348.50
 
         in_golden_window = (10, 30) <= (curr_hour, curr_min) <= (14, 30)
         golden_desc = f"{curr_hour:02d}:{curr_min:02d} UTC (Active 10:30-14:30)" if in_golden_window else f"{curr_hour:02d}:{curr_min:02d} UTC (Standby outside 10:30-14:30)"

@@ -3514,7 +3514,17 @@
                 if (val > 0) lowerData.push({ time: c.time, value: val });
             });
 
-            const emaData = (emaVal > 0) ? cleanCandles.map(c => ({ time: c.time, value: emaVal })) : [];
+            const emaData = [];
+            cleanCandles.forEach((c, idx) => {
+                const src = map.get(c.time);
+                let val = (src && src.ema !== undefined && !isNaN(src.ema)) ? Number(src.ema) : null;
+                if (val === null && idx > 0 && emaData[idx - 1]) {
+                    val = emaData[idx - 1].value;
+                } else if (val === null && emaVal > 0) {
+                    val = emaVal;
+                }
+                if (val > 0) emaData.push({ time: c.time, value: val });
+            });
 
             const isInitial = !radarInitialFitDone[radarTimeframe];
             const barCountDiff = Math.abs(cleanCandles.length - radarLastBarsCount[radarTimeframe]);
