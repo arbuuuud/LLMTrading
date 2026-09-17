@@ -2843,7 +2843,15 @@
         function startAccountsPolling() {
             if (accountsPollTimer) clearInterval(accountsPollTimer);
             fetchRadarData();
-            accountsPollTimer = setInterval(fetchRadarData, 1500);
+            loadAccountsDashboard();
+            let accTicks = 0;
+            accountsPollTimer = setInterval(() => {
+                fetchRadarData();
+                accTicks++;
+                if (accTicks % 2 === 0) {
+                    loadAccountsDashboard();
+                }
+            }, 1500);
         }
 
         function stopAccountsPolling() {

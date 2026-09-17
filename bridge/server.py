@@ -433,6 +433,74 @@ class LiveBridgeServer:
         self._last_radar_save = 0.0
         self.latest_order_receipt: Optional[Dict[str, Any]] = None
         self._ipc_task: Optional[asyncio.Task] = None
+        self._last_account_persist: float = 0.0
+
+    def _auto_register_account(self, account_id: str, company: str, currency: str, balance: float, equity: float):
+        if not account_id or account_id in ("Unknown", "0"):
+            return
+        try:
+            self._reload_accounts_config()
+            cfg = self.cached_config or {}
+            accounts = cfg.get("accounts", {})
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            str_id = str(account_id)
+
+            # If default dummy 10001 is present alongside real broker accounts, prune mock demo
+            if "10001" in accounts and accounts["10001"].get("broker") == "MetaQuotes-Demo" and str_id != "10001":
+                del accounts["10001"]
+
+            acc = accounts.get(str_id)
+            if not acc:
+                default_profile = cfg.get("default_profile", "sweet_spot")
+                accounts[str_id] = {
+                    "account_id": str_id,
+                    "label": f"{company} #{str_id}",
+                    "broker": company or "MetaTrader 5 Broker",
+                    "profile": default_profile,
+                    "active": True,
+                    "balance": round(float(balance), 2),
+                    "equity": round(float(equity), 2),
+                    "currency": currency or "USD",
+                    "notes": "Auto-registered from live MT5 connection",
+                    "last_seen": now_str,
+                    "updated_at": now_str
+                }
+                logger.info(f"✨ [AUTO-REGISTER] Live Account #{str_id} ({company}) registered in accounts.yaml! Profile: {default_profile}")
+            else:
+                acc["balance"] = round(float(balance), 2)
+                acc["equity"] = round(float(equity), 2)
+                acc["active"] = True
+                acc["last_seen"] = now_str
+                if company and company not in ("MetaTrader 5 Broker", "Unknown"):
+                    acc["broker"] = company
+            cfg["accounts"] = accounts
+            with open(self.accounts_config_path, "w", encoding="utf-8") as f:
+                yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            self.cached_config = cfg
+            self.last_config_load = time.time()
+        except Exception as e:
+            logger.error(f"[Bridge] Error auto-registering account #{account_id}: {e}")
+
+    def _update_account_equity(self, account_id: str, balance: float, equity: float):
+        if not account_id or account_id in ("Unknown", "0"):
+            return
+        try:
+            self._reload_accounts_config()
+            cfg = self.cached_config or {}
+            accounts = cfg.get("accounts", {})
+            str_id = str(account_id)
+            if str_id in accounts:
+                acc = accounts[str_id]
+                acc["balance"] = round(float(balance), 2)
+                acc["equity"] = round(float(equity), 2)
+                acc["active"] = True
+                acc["last_seen"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with open(self.accounts_config_path, "w", encoding="utf-8") as f:
+                    yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                self.cached_config = cfg
+                self.last_config_load = time.time()
+        except Exception as e:
+            logger.debug(f"[Bridge] Error updating account equity: {e}")
 
     def _reload_accounts_config(self):
         try:
@@ -612,8 +680,13 @@ class LiveBridgeServer:
 
         if msg_type == "REGISTER":
             acc_id = str(msg.get("account_id", "Unknown"))
+            company = str(msg.get("company", "MetaTrader 5 Broker"))
+            currency = str(msg.get("currency", "USD"))
+            balance = float(msg.get("balance", 10000.0))
+            equity = float(msg.get("equity", 10000.0))
             self.active_account_id = acc_id
-            logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({msg.get('company')}) registered! Balance: ${msg.get('balance')} | Equity: ${msg.get('equity')}")
+            logger.info(f"📥 [MT5 HANDSHAKE] Account #{acc_id} ({company}) registered! Balance: ${balance} | Equity: ${equity}")
+            self._auto_register_account(acc_id, company, currency, balance, equity)
             # Ensure governor is loaded for this account
             self.get_governor_for_account(acc_id)
             self._save_radar_state()
@@ -705,9 +778,16 @@ class LiveBridgeServer:
         spread = tick["spread"]
         time_ms = tick["time"]
         equity = float(tick.get("equity", 10000.0))
+        balance = float(tick.get("balance", equity))
         open_pos = int(tick.get("open_positions", 0))
         acc_id = str(tick.get("account_id", self.active_account_id))
         self.active_account_id = acc_id
+
+        # Periodically refresh live equity & balance in accounts.yaml
+        now_t = time.time()
+        if now_t - self._last_account_persist >= 10.0:
+            self._last_account_persist = now_t
+            self._update_account_equity(acc_id, balance, equity)
 
         # Check gap detected in aggregator
         if getattr(self.aggregator, "gap_detected", False):
