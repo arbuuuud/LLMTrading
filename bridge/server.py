@@ -218,7 +218,7 @@ class MultiTimeframeBarAggregator:
                 else:
                     if self.history_m1:
                         gap_sec = (completed_m1["timestamp"] - self.history_m1[-1]["timestamp"]).total_seconds()
-                        if gap_sec > 120:
+                        if gap_sec > 180 and not self.gap_detected:
                             self.gap_detected = True
                     self.history_m1.append(dict(completed_m1))
                 if len(self.history_m1) > self.max_history_m1:
@@ -425,6 +425,8 @@ class LiveBridgeServer:
         self.last_sync_time: float = 0.0
         self.has_real_broker_bars: bool = False
         self._last_ipc_check: float = 0.0
+        self._pending_sync_bars: List[Dict[str, Any]] = []
+        self._last_force_sync_time: float = 0.0
 
         self.radar_state_path = REPORTS_DIR / "radar_state.json"
         self._last_radar_save = 0.0
@@ -502,6 +504,16 @@ class LiveBridgeServer:
             self._save_radar_state()
             return False
 
+        now = time.time()
+        # Prevent sync looping/thrashing: enforce 10s cooldown and skip if sync already in progress
+        if self.data_integrity_status == "SYNCING" and (now - self._last_force_sync_time) < 15.0:
+            logger.debug(f"[Force Sync] Skipped: sync already in-flight ({reason})")
+            return False
+        if (now - self._last_force_sync_time) < 10.0:
+            logger.debug(f"[Force Sync] Throttled: requested too recently ({reason})")
+            return False
+
+        self._last_force_sync_time = now
         logger.info(f"🔄 [FORCE GATHER] Requesting 360 historical M1 bars from MT5! Reason: {reason}")
         self.data_integrity_status = "SYNCING"
         self._save_radar_state()
@@ -586,6 +598,7 @@ class LiveBridgeServer:
         """
         Processes historical M1 bars sent by MT5 on connect/reconnect.
         Re-accumulates VWAP and updates higher-timeframe structures without firing trade signals.
+        Buffers batches atomically so radar state and charts never see half-cleared history.
         """
         bars = msg.get("bars", [])
         if not bars:
@@ -595,46 +608,49 @@ class LiveBridgeServer:
         total = msg.get("total", 1)
         symbol = msg.get("symbol", "XAUUSD")
 
-        # Ingest bars into aggregator history
         if batch == 1:
+            self._pending_sync_bars = []
+
+        self._pending_sync_bars.extend(bars)
+        logger.info(f"📥 [BAR SYNC] Batch {batch}/{total} received ({len(bars)} M1 bars, total buffered: {len(self._pending_sync_bars)})")
+
+        if batch >= total:
+            # Atomic swap: replace aggregator history only once all batches have arrived
             self.aggregator.history_m1.clear()
             self.aggregator.history_m15.clear()
             self.aggregator.baseline_aligned = True
+            self.aggregator.ingest_historical_bars(self._pending_sync_bars, symbol)
 
-        self.aggregator.ingest_historical_bars(bars, symbol)
+            # Re-accumulate scalper VWAP and H1 EMA across the reconciled bars
+            for b in self.aggregator.history_m1:
+                bar_dict = {
+                    "symbol": symbol,
+                    "timestamp": b["timestamp"],
+                    "open": float(b["open"]),
+                    "high": float(b["high"]),
+                    "low": float(b["low"]),
+                    "close": float(b["close"]),
+                    "mean_spread": float(b.get("mean_spread", 0.20)),
+                    "tick_volume": int(b.get("tick_volume", 1))
+                }
+                self.scalper_strategy.update_indicators_only(bar_dict)
 
-        # Update scalper VWAP and H1 EMA
-        for b in bars:
-            dt = datetime.fromtimestamp(b["time"] / 1000.0, tz=timezone.utc)
-            bar_dict = {
-                "symbol": symbol,
-                "timestamp": dt,
-                "open": float(b["open"]),
-                "high": float(b["high"]),
-                "low": float(b["low"]),
-                "close": float(b["close"]),
-                "mean_spread": float(b.get("spread", 0.20)),
-                "tick_volume": int(b.get("volume", 1))
-            }
-            self.scalper_strategy.update_indicators_only(bar_dict)
-
-        logger.info(
-            f"📥 [BAR SYNC] Batch {batch}/{total} ingested ({len(bars)} M1 bars). "
-            f"VWAP re-anchored: ${self.scalper_strategy.current_vwap:.2f} "
-            f"(±1.8σ: ${self.scalper_strategy.lower_band:.2f} - ${self.scalper_strategy.upper_band:.2f})"
-        )
-
-        if batch >= total:
             # Reconstruct M15 history and update NFC zones
             self.aggregator.rebuild_m15_history()
             for m15_b in self.aggregator.history_m15[-40:]:
                 self.intraday_strategy.update_zones_only(m15_b)
+
+            self._pending_sync_bars.clear()
             self.has_real_broker_bars = True
             self.synced_bars_count = len(self.aggregator.history_m1)
             self.last_sync_time = time.time()
             self.data_integrity_status = "SYNCHRONIZED"
             self._save_radar_state()
-            logger.info(f"✅ [DATA INTEGRITY 100%] Successfully reconciled {len(self.aggregator.history_m1)} M1 bars & {len(self.aggregator.history_m15)} M15 bars directly from broker. State fully aligned & trade-ready!")
+            logger.info(
+                f"✅ [DATA INTEGRITY 100%] Successfully reconciled {len(self.aggregator.history_m1)} M1 bars & "
+                f"{len(self.aggregator.history_m15)} M15 bars directly from broker. State fully aligned & trade-ready! "
+                f"VWAP: ${self.scalper_strategy.current_vwap:.2f} (±1.8σ: ${self.scalper_strategy.lower_band:.2f} - ${self.scalper_strategy.upper_band:.2f})"
+            )
 
     async def _handle_tick(self, tick: Dict[str, Any]):
         self.latest_tick = tick
@@ -666,9 +682,10 @@ class LiveBridgeServer:
         # Check gap detected in aggregator
         if getattr(self.aggregator, "gap_detected", False):
             self.aggregator.gap_detected = False
-            logger.warning("⚠️ [DATA GAP DETECTED] Missing bars detected in tick stream! Auto-triggering Force Gather...")
-            self.data_integrity_status = "GAP_DETECTED"
-            await self.request_force_sync(reason="Stream Timestamp Gap Detected")
+            if self.data_integrity_status != "SYNCING":
+                logger.warning("⚠️ [DATA GAP DETECTED] Missing bars detected in tick stream! Auto-triggering Force Gather...")
+                self.data_integrity_status = "GAP_DETECTED"
+                await self.request_force_sync(reason="Stream Timestamp Gap Detected")
 
         if open_pos == 0:
             self.scalper_adapter.positions.clear()

@@ -253,8 +253,29 @@ class TestLiveBridge(unittest.TestCase):
 
             # Ensure no rogue trades were executed during catch-up
             self.assertEqual(len(server.scalper_adapter.positions), 0)
+            self.assertEqual(server.data_integrity_status, "SYNCHRONIZED")
+            self.assertEqual(server.synced_bars_count, 60)
 
-            # 4. Stream next live tick seamlessly
+            # 4. Test multi-batch atomic sync buffering
+            batch1 = [{"time": t0 + (i * 60000), "open": 4340.0, "high": 4341.0, "low": 4339.0, "close": 4340.5, "volume": 100, "spread": 0.20} for i in range(10)]
+            batch2 = [{"time": t0 + ((i + 10) * 60000), "open": 4340.5, "high": 4342.0, "low": 4340.0, "close": 4341.5, "volume": 100, "spread": 0.20} for i in range(10)]
+
+            # Send batch 1 of 2
+            writer.write((json.dumps({"type": "BAR_SYNC", "symbol": "XAUUSD", "batch": 1, "total": 2, "bars": batch1}) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.1)
+            # Prior history should NOT be cleared until total batches arrive
+            self.assertEqual(len(server._pending_sync_bars), 10)
+
+            # Send batch 2 of 2
+            writer.write((json.dumps({"type": "BAR_SYNC", "symbol": "XAUUSD", "batch": 2, "total": 2, "bars": batch2}) + "\n").encode())
+            await writer.drain()
+            await asyncio.sleep(0.2)
+            self.assertEqual(len(server._pending_sync_bars), 0)
+            self.assertEqual(server.synced_bars_count, 20)
+            self.assertEqual(server.data_integrity_status, "SYNCHRONIZED")
+
+            # 5. Stream next live tick seamlessly
             next_tick = {
                 "type": "TICK",
                 "account_id": "10001",

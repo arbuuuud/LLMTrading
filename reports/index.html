@@ -3213,9 +3213,16 @@
             const isInitial = !radarInitialFitDone[radarTimeframe];
             const barCountDiff = Math.abs(cleanCandles.length - radarLastBarsCount[radarTimeframe]);
 
-            // Initial load or major batch update: full setData + fitContent() ONCE
+            // Initial load or major batch update: full setData with viewport stability
             if (isInitial || barCountDiff > 3) {
                 try {
+                    let prevRange = null;
+                    if (!isInitial && radarChart && radarChart.timeScale) {
+                        try {
+                            prevRange = radarChart.timeScale().getVisibleLogicalRange();
+                        } catch(e) {}
+                    }
+
                     radarCandleSeries.setData(cleanCandles);
                     if (radarTimeframe === 'M1') {
                         if (vwapData.length) radarVwapSeries.setData(vwapData);
@@ -3232,6 +3239,10 @@
                     if (isInitial) {
                         radarChart.timeScale().fitContent();
                         radarInitialFitDone[radarTimeframe] = true;
+                    } else if (prevRange) {
+                        try {
+                            radarChart.timeScale().setVisibleLogicalRange(prevRange);
+                        } catch(e) {}
                     }
                     radarLastBarsCount[radarTimeframe] = cleanCandles.length;
                     radarLastBarTime[radarTimeframe] = cleanCandles[cleanCandles.length - 1].time;
