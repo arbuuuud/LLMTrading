@@ -232,7 +232,21 @@ def run_fast_engine2_dated_trades() -> List[DatedTrade]:
     opps = detect_m15_zones_and_signals(m15_data, df_m3)
 
     trades: List[DatedTrade] = []
+    account_equity = 10000.0
+    current_date = None
+    daily_pnl = 0.0
+    daily_losses = 0
+
     for opp in opps:
+        d = opp["date"]
+        if d != current_date:
+            current_date = d
+            daily_pnl = 0.0
+            daily_losses = 0
+
+        if daily_losses >= 2:
+            continue
+
         if not (opp["fibo_ote"] and opp["strict_eq"] and opp["m3_wick_confirm"]):
             continue
         c = opp["price_m15_close"]
@@ -261,29 +275,42 @@ def run_fast_engine2_dated_trades() -> List[DatedTrade]:
                 if fh >= sl: is_loss = True; break
                 if fl <= tp: is_win = True; break
 
+        if not is_win and not is_loss:
+            continue
+
+        risk_pct = 0.25 if daily_pnl >= 125.0 else 0.50
+        risk_dollars = account_equity * (risk_pct / 100.0)
+
         dt_obj = opp["date"]
         d_str = str(dt_obj)
         m_str = d_str[:7]
         yr = int(opp["year"])
 
         if is_win:
+            net_gain = risk_dollars * 5.0
             trades.append(DatedTrade(
                 date_str=d_str,
                 month_str=m_str,
                 year=yr,
-                net_pnl=round(50.0 * 5.0, 2),
+                net_pnl=round(net_gain, 2),
                 engine="INTRADAY",
                 is_win=True
             ))
+            account_equity += net_gain
+            daily_pnl += net_gain
         elif is_loss:
+            net_loss = -risk_dollars
             trades.append(DatedTrade(
                 date_str=d_str,
                 month_str=m_str,
                 year=yr,
-                net_pnl=-50.0,
+                net_pnl=round(net_loss, 2),
                 engine="INTRADAY",
                 is_win=False
             ))
+            account_equity += net_loss
+            daily_pnl += net_loss
+            daily_losses += 1
 
     print(f"  [E2 Sniper] Extracted {len(trades)} dated trades in {time.time() - t0:.2f}s.")
     return trades
