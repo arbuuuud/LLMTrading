@@ -1,0 +1,32 @@
+{
+  "champion": {
+    "name": "M3_H4_EMA50_RR_2_0_ATR_1_0_TICK_TOUCH_RATCHET",
+    "timeframe": "M3",
+    "trades": 499,
+    "net_pnl": 2676.51,
+    "profit_factor": 1.17,
+    "max_dd_pct": 6.69
+  },
+  "directional_inversion": {
+    "net_pnl": -4453.97,
+    "profit_factor": 0.76,
+    "max_dd_pct": 49.78,
+    "edge_confirmed": true
+  },
+  "random_monkeys_500": {
+    "mean_pnl": -1059.41,
+    "std_pnl": 1535.28,
+    "p95_ceiling": 1410.24,
+    "p99_ceiling": 2158.64,
+    "z_score": 2.43,
+    "p_value": 0.007479,
+    "passes_noise_test": true
+  },
+  "monte_carlo_1000": {
+    "median_equity": 12626.29,
+    "p95_max_dd": 18.06,
+    "median_max_dd": 9.45,
+    "probability_of_ruin_pct": 44.3,
+    "passes_hurdle": false
+  }
+}
