@@ -907,6 +907,32 @@
             </div>
         </div>
 
+        <!-- Timing & Execution Protocol Guide Bar -->
+        <div style="background:#090d13; border:1px solid #30363d; border-radius:8px; padding:12px 18px; margin-bottom:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid #21262d; padding-bottom:6px;">
+                <span style="font-size:0.85rem; font-weight:700; color:#58a6ff; display:flex; align-items:center; gap:6px;">
+                    🕒 Panduan Presisi Eksekusi Radar: Di Candle Berapa & Apa Saja yang Ditunggu?
+                </span>
+                <span class="badge badge-amber" style="font-size:0.7rem;">Zero Repainting Bar-Close Protocol</span>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:14px; font-size:0.78rem; line-height:1.45;">
+                <div style="background:#161b22; padding:10px 12px; border-radius:6px; border-left:3px solid #3fb950;">
+                    <div style="font-weight:700; color:#3fb950; margin-bottom:4px; font-size:0.82rem;">⚡ Engine 1: Scalper M3 (Magic 1001)</div>
+                    <div>• <strong>Candle Eksekusi:</strong> Timeframe <strong>M3 (Candle 3-Menit)</strong>.</div>
+                    <div>• <strong>Kapan Dievaluasi:</strong> Tepat di detik <strong>:00 penutupan bar M3</strong> (Menit :03, :06, :09, :12, :15, dst).</div>
+                    <div>• <strong>Yang Ditunggu:</strong> (1) Golden Window 10:30–14:30 UTC, (2) Tren H4 EMA 50, (3) Harga menyentuh pita ekstrem VWAP ±1.8σ, (4) Candle M3 ditutup meninggalkan <strong>Rejection Wick ≥ 45%</strong>.</div>
+                    <div>• <strong>Target & SL:</strong> SL Hard Tick broker (jarak $1.50 - $2.00), Target <strong>1 : 2.0 RR (+1.0% net win)</strong>.</div>
+                </div>
+                <div style="background:#161b22; padding:10px 12px; border-radius:6px; border-left:3px solid #d2a8ff;">
+                    <div style="font-weight:700; color:#d2a8ff; margin-bottom:4px; font-size:0.82rem;">🏹 Engine 2: Intraday Sniper (Magic 2001)</div>
+                    <div>• <strong>Candle Analisa vs Trigger:</strong> Analisa POI di <strong>M15</strong>, Trigger Sniper di <strong>M3</strong>.</div>
+                    <div>• <strong>Kapan Dievaluasi:</strong> Tepat di detik <strong>:00 penutupan bar M3</strong> saat harga berada di dalam zona M15.</div>
+                    <div>• <strong>Yang Ditunggu:</strong> (1) Base Unfilled Orders (DBR/RBD) M15 + Fibo OTE 61.8%–78.6%, (2) Strict Discount/Premium (&lt;50% / &gt;50%), (3) Retest masuk zona POI (Status ARMED), (4) Penutupan bar M3 membentuk <strong>Rejection Wick ≥ 45%</strong>.</div>
+                    <div>• <strong>Target & SL:</strong> SL super tipis di sumbu M3 ($1.20 - $1.80), Target Home Run <strong>1 : 5.0 RR (+2.50% net win)</strong>.</div>
+                </div>
+            </div>
+        </div>
+
         <!-- 2-Column Split: Left = Interactive Chart, Right = Tactical HUD -->
         <div style="display:grid; grid-template-columns: minmax(0, 1.85fr) minmax(360px, 1.15fr); gap:16px; align-items:start;">
             
@@ -1208,17 +1234,65 @@
             <div id="p-profile-desc-box" style="background:#161b22; border:1px solid #30363d; border-left:4px solid #1f6feb; border-radius:8px; padding:16px 20px; margin-bottom:20px;">
                 <h3 id="p-profile-name" style="color:#58a6ff; font-size:1.1rem; margin-bottom:6px;">⚖️ Sweet Spot (0.75% Base Risk - Rekomendasi)</h3>
                 <p id="p-profile-text" style="color:#c9d1d9; font-size:0.85rem; line-height:1.5;">
-                    Setting paling seimbang untuk akun real pribadi: menghasilkan profit tinggi <strong>+$14,475.06 (+144.8% ROI)</strong> dengan Max Drawdown moderat di <strong>14.2%</strong>.
+                    Setting paling seimbang untuk akun real pribadi: menghasilkan profit tinggi <strong>+$13,239.66 (+132.4% ROI)</strong> dengan Max Drawdown hanya <strong>10.0%</strong> melintasi Modern Era 2010–2026.
                 </p>
             </div>
 
-            <!-- Monthly PnL Table for Selected Profile -->
+            <!-- Yearly Summary Table for Selected Profile -->
             <div class="table-box" style="margin:0 0 24px 0;">
                 <div class="table-header">
-                    <span>📅 Rincian Profit / Loss Bulanan (Mei 2025 - Maret 2026)</span>
-                    <span id="p-month-summary-badge" class="badge badge-cyan">7 / 11 Bulan Hijau</span>
+                    <span>📅 Rekapitulasi Kinerja Per Tahun (2010 – 2026 / 17 Tahun)</span>
+                    <span id="p-year-summary-badge" class="badge badge-cyan">15 / 17 Tahun Profit (88.2%)</span>
                 </div>
                 <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tahun</th>
+                                <th>Net Profit ($)</th>
+                                <th>ROI Tahunan (%)</th>
+                                <th>Jumlah Trade</th>
+                                <th>Win Rate (%)</th>
+                                <th>Status Hasil</th>
+                            </tr>
+                        </thead>
+                        <tbody id="p-yearly-tbody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Monthly PnL Table for Selected Profile with Filter -->
+            <div class="table-box" style="margin:0 0 24px 0;">
+                <div class="table-header" style="flex-wrap:wrap; gap:10px;">
+                    <span>📅 Rincian Profit / Loss Bulanan Lengkap (2010 s/d 2026 / 181 Bulan)</span>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:0.75rem; color:#8b949e;">Filter Tahun:</span>
+                        <select id="p-year-filter" class="form-input" style="font-size:0.75rem; padding:3px 8px; width:auto; background:#21262d;" onchange="filterMonthlyTable(this.value)">
+                            <option value="ALL" selected>Semua Tahun (2010–2026 / 181 Bulan)</option>
+                            <option value="2026">2026</option>
+                            <option value="2025">2025</option>
+                            <option value="2024">2024</option>
+                            <option value="2023">2023</option>
+                            <option value="2022">2022</option>
+                            <option value="2021">2021</option>
+                            <option value="2020">2020</option>
+                            <option value="2019">2019</option>
+                            <option value="2018">2018</option>
+                            <option value="2017">2017</option>
+                            <option value="2016">2016</option>
+                            <option value="2015">2015</option>
+                            <option value="2014">2014</option>
+                            <option value="2013">2013</option>
+                            <option value="2012">2012</option>
+                            <option value="2011">2011</option>
+                            <option value="2010">2010</option>
+                        </select>
+                        <span id="p-month-summary-badge" class="badge badge-cyan">92 / 181 Bulan Hijau</span>
+                    </div>
+                </div>
+                <div class="table-scroll" style="max-height: 480px; overflow-y:auto;">
                     <table>
                         <thead>
                             <tr>
@@ -2833,17 +2907,72 @@
                 textEl.innerHTML = 'Akselerasi modal berkecepatan tinggi untuk modal kecil. Mencetak <strong>+$41,422.36 (+414.2% ROI)</strong> melintasi Modern Era dengan Max Drawdown <strong>33.2%</strong>.';
             }
 
-            // Render monthly table
+            // Render yearly table
+            const ybody = document.getElementById('p-yearly-tbody');
+            if (ybody) {
+                ybody.innerHTML = '';
+                const yearly = pData.yearly_breakdown || {};
+                const sortedYears = Object.keys(yearly).sort();
+                let winYears = 0;
+                sortedYears.forEach(y => {
+                    const row = yearly[y];
+                    if (row.net_pnl > 0) winYears++;
+                    const isGreen = row.net_pnl >= 0;
+                    const sign = isGreen ? '+' : '';
+                    const col = isGreen ? '#3fb950' : '#f85149';
+                    const statusBadge = isGreen ? '<span class="badge" style="background:#238636;">PROFIT</span>' : '<span class="badge" style="background:#da3633;">LOSS</span>';
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid #21262d';
+                    tr.innerHTML = `
+                        <td><strong>${row.year}</strong></td>
+                        <td style="color:${col}; font-weight:700;">${sign}$${Math.abs(row.net_pnl).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
+                        <td style="color:${col}; font-weight:600;">${sign}${row.roi_pct}%</td>
+                        <td>${row.trades} trades</td>
+                        <td>${row.win_rate}%</td>
+                        <td>${statusBadge}</td>
+                    `;
+                    ybody.appendChild(tr);
+                });
+                const yBadge = document.getElementById('p-year-summary-badge');
+                if (yBadge && sortedYears.length > 0) {
+                    const pct = ((winYears / sortedYears.length) * 100).toFixed(1);
+                    yBadge.textContent = `${winYears} / ${sortedYears.length} Tahun Profit (${pct}%)`;
+                }
+            }
+
+            window.currentSelectedPortfolioKey = key;
+            const filterEl = document.getElementById('p-year-filter');
+            const activeYear = filterEl ? filterEl.value : 'ALL';
+            filterMonthlyTable(activeYear);
+        }
+
+        function filterMonthlyTable(yearFilter) {
+            const key = window.currentSelectedPortfolioKey || 'sweet_spot';
+            const pData = ALL_PORTFOLIOS_DATA[key];
+            if (!pData) return;
+
             const tbody = document.getElementById('p-monthly-tbody');
+            if (!tbody) return;
             tbody.innerHTML = '';
+
             const months = pData.monthly_pnl || {};
-            Object.keys(months).forEach(m => {
+            const sortedMonths = Object.keys(months).sort();
+            let filteredCount = 0;
+            let greenCount = 0;
+
+            sortedMonths.forEach(m => {
+                if (yearFilter !== 'ALL' && !m.startsWith(yearFilter)) {
+                    return;
+                }
+                filteredCount++;
                 const val = months[m];
+                if (val > 0) greenCount++;
                 const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid #21262d';
                 const isGreen = val >= 0;
                 const sign = isGreen ? '+' : '';
                 const col = isGreen ? '#3fb950' : '#f85149';
-                const statusBadge = isGreen ? '<span class="badge">PROFIT</span>' : '<span class="badge" style="background:#da3633;">DRAWDOWN</span>';
+                const statusBadge = isGreen ? '<span class="badge" style="background:#238636;">PROFIT</span>' : '<span class="badge" style="background:#da3633;">LOSS</span>';
                 tr.innerHTML = `
                     <td><strong>${m}</strong></td>
                     <td style="color:${col}; font-weight:700;">${sign}$${Math.abs(val).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
@@ -2852,6 +2981,12 @@
                 `;
                 tbody.appendChild(tr);
             });
+
+            const badge = document.getElementById('p-month-summary-badge');
+            if (badge) {
+                const pct = filteredCount > 0 ? ((greenCount / filteredCount) * 100).toFixed(1) : '0.0';
+                badge.textContent = `${greenCount} / ${filteredCount} Bulan Hijau (${pct}%)`;
+            }
         }
 
         async function loadAccountsDashboard() {
