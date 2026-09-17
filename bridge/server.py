@@ -415,6 +415,7 @@ class LiveBridgeServer:
         self.active_account_id: str = "10001"
 
         self.client_writer: Optional[asyncio.StreamWriter] = None
+        self.connected_clients: Dict[str, asyncio.StreamWriter] = {}
         self.latest_tick: Optional[Dict[str, Any]] = None
         self.server: Optional[asyncio.Server] = None
         self.running = False
@@ -594,13 +595,15 @@ class LiveBridgeServer:
                             tp = float(cmd_data.get("tp", 0.0) or 0.0)
                             magic = int(cmd_data.get("magic", 9999))
                             comment = str(cmd_data.get("comment", "Manual_Test_Pad"))
-                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched {side} {lots} lots on {symbol} (Price: {price}, SL: {sl}, TP: {tp}, Magic: {magic})")
-                            await self.send_order(symbol=symbol, side=side, lots=lots, sl=sl, tp=tp, price=price, comment=comment, magic=magic)
+                            target_account_id = str(cmd_data.get("target_account_id", "")).strip() or None
+                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched {side} {lots} lots on {symbol} (Target Acc: {target_account_id or 'ALL'}, Price: {price}, SL: {sl}, TP: {tp}, Magic: {magic})")
+                            await self.send_order(symbol=symbol, side=side, lots=lots, sl=sl, tp=tp, price=price, comment=comment, magic=magic, target_account_id=target_account_id)
                         elif action == "CLOSE_ALL":
                             symbol = str(cmd_data.get("symbol", "")).upper()
                             magic = int(cmd_data.get("magic", 0))
-                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched CLOSE_ALL (Symbol: '{symbol}', Magic: {magic})")
-                            await self.send_close_all(symbol=symbol, magic=magic)
+                            target_account_id = str(cmd_data.get("target_account_id", "")).strip() or None
+                            logger.info(f"🕹️ [MANUAL TEST PAD] Dispatched CLOSE_ALL (Symbol: '{symbol}', Magic: {magic}, Target Acc: {target_account_id or 'ALL'})")
+                            await self.send_close_all(symbol=symbol, magic=magic, target_account_id=target_account_id)
                     except Exception as e:
                         logger.error(f"[Bridge] IPC command processing error: {e}")
             except asyncio.CancelledError:
@@ -643,6 +646,7 @@ class LiveBridgeServer:
         client_addr = writer.get_extra_info("peername")
         logger.info(f"[Bridge] MetaTrader 5 Connected from {client_addr}!")
         self.client_writer = writer
+        current_client_account_id = None
 
         if not self.dry_run:
             self.data_integrity_status = "SYNCING"
@@ -661,6 +665,9 @@ class LiveBridgeServer:
                     if line:
                         try:
                             msg = json.loads(line)
+                            if (msg.get("type") == "REGISTER" or msg.get("action") == "REGISTER") and msg.get("account_id"):
+                                current_client_account_id = str(msg.get("account_id"))
+                                self.connected_clients[current_client_account_id] = writer
                             await self._dispatch_incoming_message(msg)
                         except json.JSONDecodeError:
                             logger.error(f"[Bridge] Invalid JSON payload from MT5: {line}")
@@ -671,8 +678,11 @@ class LiveBridgeServer:
         except Exception as e:
             logger.error(f"[Bridge] Socket communication error: {e}")
         finally:
-            logger.warning("[Bridge] MetaTrader 5 Disconnected.")
-            self.client_writer = None
+            logger.warning(f"[Bridge] MetaTrader 5 (Account: #{current_client_account_id or 'Unknown'}) Disconnected.")
+            if current_client_account_id and current_client_account_id in self.connected_clients:
+                del self.connected_clients[current_client_account_id]
+            if self.client_writer == writer:
+                self.client_writer = next(iter(self.connected_clients.values()), None)
             self._save_radar_state()
 
     async def _dispatch_incoming_message(self, msg: Dict[str, Any]):
@@ -867,37 +877,61 @@ class LiveBridgeServer:
         account_equity = float(self.latest_tick.get("equity", 10000.0))
         open_pos = int(self.latest_tick.get("open_positions", 0))
 
-        # Dynamic Multi-Account Risk Governor Evaluation
-        acc_gov = self.get_governor_for_account(self.active_account_id)
-        gov_approval = acc_gov.evaluate_entry(
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            current_spread=current_spread,
-            max_spread=0.35,
-            num_open_positions=open_pos
-        )
-
-        if not gov_approval.approved:
-            logger.warning(f"[{strategy_name} VETO] Order rejected by Account #{self.active_account_id} Governor: {gov_approval.reason}")
-            return
-
+        # Multi-Account Dynamic Risk Governor Evaluation & Execution
         side_str = "BUY" if direction == OrderDirection.BUY else "SELL"
-        final_lots = gov_approval.lots
+        target_accounts = list(self.connected_clients.items()) if self.connected_clients else [(self.active_account_id, self.client_writer)]
 
-        logger.info(
-            f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic} | Acc: #{self.active_account_id}) | "
-            f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${gov_approval.risk_dollars:.2f} ({gov_approval.risk_pct}%)"
-        )
+        for acc_id, writer in target_accounts:
+            if not writer and not self.dry_run:
+                continue
 
-        await self.send_order(
-            symbol=symbol,
-            side=side_str,
-            lots=final_lots,
-            sl=stop_loss,
-            tp=take_profit,
-            comment=comment,
-            magic=magic
-        )
+            acc_gov = self.get_governor_for_account(acc_id)
+            gov_approval = acc_gov.evaluate_entry(
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                current_spread=current_spread,
+                max_spread=0.35,
+                num_open_positions=open_pos
+            )
+
+            if not gov_approval.approved:
+                logger.warning(f"[{strategy_name} VETO] Order rejected by Account #{acc_id} Governor: {gov_approval.reason}")
+                continue
+
+            final_lots = gov_approval.lots
+
+            logger.info(
+                f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic} | Acc: #{acc_id}) | "
+                f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${gov_approval.risk_dollars:.2f} ({gov_approval.risk_pct}%)"
+            )
+
+            order_cmd = {
+                "action": "ORDER",
+                "symbol": symbol,
+                "side": side_str,
+                "lots": final_lots,
+                "price": round(float(entry_price), 2),
+                "sl": round(float(stop_loss), 2),
+                "tp": round(float(take_profit), 2),
+                "comment": comment,
+                "magic": int(magic)
+            }
+
+            if self.dry_run:
+                logger.info(f"[PAPER TRADE DRY-RUN] Simulating Order for Acc #{acc_id}: {order_cmd}")
+            elif writer:
+                await self._send_to_writer(writer, order_cmd)
+
+    async def _send_to_writer(self, writer: asyncio.StreamWriter, cmd: Dict[str, Any]) -> bool:
+        try:
+            payload = json.dumps(cmd, separators=(',', ':')) + "\n"
+            writer.write(payload.encode("utf-8"))
+            await writer.drain()
+            logger.info(f"[DISPATCH TO MT5] Sent command: {payload.strip()}")
+            return True
+        except Exception as e:
+            logger.error(f"[Bridge] Failed to dispatch command: {e}")
+            return False
 
     async def send_order(
         self,
@@ -908,7 +942,8 @@ class LiveBridgeServer:
         tp: float = 0.0,
         price: float = 0.0,
         comment: str = "LLM_AI",
-        magic: int = 1001
+        magic: int = 1001,
+        target_account_id: Optional[str] = None
     ) -> bool:
         cmd = {
             "action": "ORDER",
@@ -926,31 +961,49 @@ class LiveBridgeServer:
             logger.info(f"[PAPER TRADE DRY-RUN] Simulating Order: {cmd}")
             return True
 
-        if not self.client_writer:
-            logger.warning("[Bridge] Cannot send order: MT5 not connected.")
+        targets = []
+        if target_account_id and target_account_id in self.connected_clients:
+            targets.append(self.connected_clients[target_account_id])
+        elif self.connected_clients:
+            targets.extend(self.connected_clients.values())
+        elif self.client_writer:
+            targets.append(self.client_writer)
+
+        if not targets:
+            logger.warning("[Bridge] Cannot send order: No MT5 clients connected.")
             return False
 
-        payload = json.dumps(cmd, separators=(',', ':')) + "\n"
-        self.client_writer.write(payload.encode("utf-8"))
-        await self.client_writer.drain()
-        logger.info(f"[DISPATCH TO MT5] Sent live order command: {payload.strip()}")
-        return True
+        success = True
+        for w in targets:
+            ok = await self._send_to_writer(w, cmd)
+            if not ok:
+                success = False
+        return success
 
-    async def send_close_all(self, symbol: str = "", magic: int = 0) -> bool:
+    async def send_close_all(self, symbol: str = "", magic: int = 0, target_account_id: Optional[str] = None) -> bool:
         cmd = {"action": "CLOSE_ALL", "symbol": symbol, "magic": int(magic)}
         if self.dry_run:
             logger.info(f"[PAPER TRADE DRY-RUN] Close Positions: {cmd}")
             return True
 
-        if not self.client_writer:
-            logger.warning("[Bridge] Cannot send CLOSE_ALL: MT5 not connected.")
+        targets = []
+        if target_account_id and target_account_id in self.connected_clients:
+            targets.append(self.connected_clients[target_account_id])
+        elif self.connected_clients:
+            targets.extend(self.connected_clients.values())
+        elif self.client_writer:
+            targets.append(self.client_writer)
+
+        if not targets:
+            logger.warning("[Bridge] Cannot send CLOSE_ALL: No MT5 clients connected.")
             return False
 
-        payload = json.dumps(cmd, separators=(',', ':')) + "\n"
-        self.client_writer.write(payload.encode("utf-8"))
-        await self.client_writer.drain()
-        logger.info(f"[DISPATCH TO MT5] Sent close command: {payload.strip()}")
-        return True
+        success = True
+        for w in targets:
+            ok = await self._send_to_writer(w, cmd)
+            if not ok:
+                success = False
+        return success
 
     def build_radar_payload(self) -> Dict[str, Any]:
         latest_tick = self.latest_tick or {}

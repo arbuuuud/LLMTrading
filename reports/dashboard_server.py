@@ -467,6 +467,7 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
             tp = float(body.get("tp", 0.0) or 0.0)
             magic = int(body.get("magic", 9999) or 9999)
             comment = str(body.get("comment", "Manual_Test_Pad"))[:31]
+            target_account_id = str(body.get("target_account_id", "")).strip()
 
             cmd_data = {
                 "action": "ORDER",
@@ -478,6 +479,7 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
                 "tp": tp,
                 "magic": magic,
                 "comment": comment,
+                "target_account_id": target_account_id,
                 "timestamp": time.time()
             }
             try:
@@ -495,10 +497,12 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/order/close_all":
             symbol = str(body.get("symbol", "")).upper().strip()
             magic = int(body.get("magic", 0) or 0)
+            target_account_id = str(body.get("target_account_id", "")).strip()
             cmd_data = {
                 "action": "CLOSE_ALL",
                 "symbol": symbol,
                 "magic": magic,
+                "target_account_id": target_account_id,
                 "timestamp": time.time()
             }
             try:
