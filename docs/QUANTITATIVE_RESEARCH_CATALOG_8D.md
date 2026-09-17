@@ -224,6 +224,22 @@ Kini, dengan tersedianya **Dataset M1 Historis 23,3 Tahun (2003–2026)** sebesa
 
 ---
 
+### 🎲 DIMENSI 9: Monte Carlo Robustness, Stress-Testing & Falsification Engine
+*Menyiksa setiap strategi kandidat melewati 1.000 skenario alternatif acak sebelum diberi predikat juara.*
+
+1. **Bootstrap Resampling Sequence Test (1.000 Iterasi):**
+   * Mengacak urutan hasil menang dan kalah (*with replacement*) sebanyak 1.000 kali untuk membongkar risiko jika loss beruntun berkumpul di satu waktu.
+   * **P95 Max Drawdown:** Mengukur seberapa dalam drawdown terburuk dalam 95% kemungkinan nasib pasar.
+   * **Risk of Ruin (%):** Menghitung probabilitas akun menyentuh drawdown > 30% (standar institusional mewajibkan $\text{Risk of Ruin} < 1.0\%$).
+2. **Execution Degradation & Missed Trade Stress:**
+   * Mensimulasikan kondisi koneksi ngelag, requote, atau slippage parah dengan cara **membuang 15% trade pemenang terbaik secara acak**.
+   * Strategi wajib tetap membukukan profit positif meski 15% kemenangan terbaiknya hilang.
+3. **The Noise Floor Benchmark (500 Random Monkeys):**
+   * Menjalankan 500 iterasi entry acak (coin toss) dengan ukuran lot dan stop loss yang sama pada data 23,3 tahun.
+   * Strategi dinyatakan **GUGUR (REJECTED)** jika tidak mampu mengungguli batas atas acak dengan signifikansi statistik $Z\text{-score} > 2.0$.
+
+---
+
 ## 4. Matriks Pengujian Lintas 6 Era Sejarah Emas (2003–2026)
 
 Dataset 23,3 tahun kami memuat seluruh siklus psikologi pasar emas:

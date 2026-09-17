@@ -103,6 +103,7 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
     6.  *Stop Loss, Defense & Order Execution*: Multi-ATR (0.8x - 1.8x) vs Structure Distal SL; Bar-Close Confirmation SL vs Tick SL; **Market Order on Close vs Resting Limit Order at Proximal Line vs Confirmed Smart Limit**.
     7.  *Profit Harvesting*: Callisto Twin 50/50 BE Ratchet vs Fixed 1:2 RR vs VWAP Mean Target + Trailing Stop.
     8.  *Risk Governor*: Prop Firm (0.5%), Sweet Spot (0.75%), Bottoming Profit Lock (+1% s/d +3%), 2-Strike Daily Shutdown.
+    9.  *Monte Carlo Robustness & Falsification Engine*: 1.000 Bootstrap Reshuffles (P95 Worst-Case DD, Risk of Ruin < 1%) + Missed Trade Stress (15% drop) + Noise Floor Control (500 Random Monkeys, Z-score > 2.0).
 *   **Timeframe Inventory (2003–2026)**:
     - M1 (7.93M bars), M2 (4.06M bars), M3 (2.74M bars), M5 (1.66M bars), M15 (561K bars), H1 (141K bars), H4 (37K bars), D1 (7.2K bars).
 *   **Target Output**:
