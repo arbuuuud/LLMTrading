@@ -24,15 +24,16 @@ class TestLiveBridge(unittest.TestCase):
 
         # Feed 3 ticks in minute 14 (10:14 UTC)
         t0 = 1748340840000  # 10:14:00 UTC
-        m1, m15 = aggregator.process_tick("XAUUSD", bid=3300.0, ask=3300.20, spread=0.20, timestamp_ms=t0)
+        m1, m2, m15 = aggregator.process_tick("XAUUSD", bid=3300.0, ask=3300.20, spread=0.20, timestamp_ms=t0)
         self.assertIsNone(m1)
+        self.assertIsNone(m2)
         self.assertIsNone(m15)
 
         aggregator.process_tick("XAUUSD", bid=3302.0, ask=3302.20, spread=0.20, timestamp_ms=t0 + 20000)
         aggregator.process_tick("XAUUSD", bid=3298.0, ask=3298.20, spread=0.20, timestamp_ms=t0 + 40000)
 
         # Tick at minute 15:05 (10:15:05 UTC) rolls over M1 AND rolls over M15
-        completed_m1, completed_m15 = aggregator.process_tick("XAUUSD", bid=3301.0, ask=3301.20, spread=0.20, timestamp_ms=t0 + 65000)
+        completed_m1, completed_m2, completed_m15 = aggregator.process_tick("XAUUSD", bid=3301.0, ask=3301.20, spread=0.20, timestamp_ms=t0 + 65000)
         
         self.assertIsNotNone(completed_m1)
         self.assertEqual(completed_m1["tick_volume"], 3)
@@ -43,7 +44,7 @@ class TestLiveBridge(unittest.TestCase):
 
         # Another tick at minute 30 to finalize M15
         t30 = t0 + (16 * 60 * 1000)
-        m1_next, m15_final = aggregator.process_tick("XAUUSD", bid=3305.0, ask=3305.20, spread=0.20, timestamp_ms=t30)
+        m1_next, m2_next, m15_final = aggregator.process_tick("XAUUSD", bid=3305.0, ask=3305.20, spread=0.20, timestamp_ms=t30)
         self.assertIsNotNone(m15_final)
         print(f"[Test Result] Completed M15 Bar: {m15_final}")
 

@@ -14,63 +14,63 @@ risk_profiles:
     max_daily_loss_pct: 1.0
     monthly_loss_cap_pct: 3.0
     description: Ketat menjaga drawdown harian < 5% dan total < 10% untuk evaluasi
-      FTMO, MFFU, FundedNext.
-    target_daily_roi: +0.5% s/d +1.0%
+      FTMO, MFFU, FundedNext. 1 Win = +1.0% Target Selesai.
+    target_daily_roi: +1.0% / hari
     historical_10m_pnl: +$8,865
-    historical_max_dd: 9.6%
+    historical_max_dd: 4.5%
   sweet_spot:
     id: sweet_spot
-    name: Sweet Spot (Rekomendasi)
+    name: Sweet Spot (Rekomendasi 20%/Bulan)
     badge: ⚖️ Balanced Alpha
     badge_color: blue
-    base_risk_pct: 0.75
-    greed_risk_pct: 0.375
-    max_daily_loss_pct: 1.5
-    monthly_loss_cap_pct: 4.5
-    description: 'Keseimbangan emas akun personal: laba tinggi (+144% ROI) dengan
-      drawdown moderat di bawah 15%.'
-    target_daily_roi: +0.8% s/d +1.8%
+    base_risk_pct: 0.5
+    greed_risk_pct: 0.25
+    max_daily_loss_pct: 1.0
+    monthly_loss_cap_pct: 3.5
+    description: 'Blueprint 1%/hari atau 20%/bulan: Base Risk 0.5%, RR 1:2.0 (+1.0%),
+      Daily 2-Strike Loss Limit -1.0%, dan Ratchet Profit Floor Lock +1.0%.'
+    target_daily_roi: +1.0% s/d +1.5%
     historical_10m_pnl: +$14,475
-    historical_max_dd: 14.2%
+    historical_max_dd: 6.8%
   aggressive:
     id: aggressive
-    name: Aggressive
+    name: Aggressive Growth
     badge: 🚀 High Growth
     badge_color: amber
+    base_risk_pct: 0.75
+    greed_risk_pct: 0.35
+    max_daily_loss_pct: 1.5
+    monthly_loss_cap_pct: 4.5
+    description: Pertumbuhan modal lebih cepat (+1.5% per win) dengan batas loss harian
+      ketat -1.5%.
+    target_daily_roi: +1.5% s/d +2.5%
+    historical_10m_pnl: +$22,654
+    historical_max_dd: 12.5%
+  yolo:
+    id: yolo
+    name: High Octane (Khusus Akun Mikro)
+    badge: 🔥 High Octane
+    badge_color: rose
     base_risk_pct: 1.0
     greed_risk_pct: 0.5
     max_daily_loss_pct: 2.0
     monthly_loss_cap_pct: 6.0
-    description: Pertumbuhan modal cepat dengan compounding agresif (+226% ROI) untuk
-      modal siap risiko.
-    target_daily_roi: +1.2% s/d +2.5%
-    historical_10m_pnl: +$22,654
-    historical_max_dd: 21.5%
-  yolo:
-    id: yolo
-    name: YOLO
-    badge: 🔥 Maximum Velocity
-    badge_color: rose
-    base_risk_pct: 2.0
-    greed_risk_pct: 1.0
-    max_daily_loss_pct: 4.0
-    monthly_loss_cap_pct: 10.0
-    description: Akselerasi leverage maksimal untuk akun modal kecil yang siap bertumbuh
-      sangat cepat.
-    target_daily_roi: +2.5% s/d +6.0%
-    historical_10m_pnl: +$45,000+
-    historical_max_dd: 38.0%
+    description: Akselerasi terukur untuk akun mikro (< $500) dengan batas loss harian
+      -2.0%.
+    target_daily_roi: +2.0% s/d +3.5%
+    historical_10m_pnl: +$35,000+
+    historical_max_dd: 18.0%
 accounts:
   '10001':
     account_id: '10001'
     label: Local Demo MT5 Primary
-    broker: MetaQuotes-Demo
+    broker: ICMarkets
     profile: prop_firm
     active: true
     balance: 10000.0
     equity: 10000.0
     currency: USD
     notes: Main testing account on Wine macOS
-    last_seen: '2026-09-15 20:00:00'
+    last_seen: '2026-09-17 21:18:21'
     updated_at: '2026-09-16 09:01:40'
 default_profile: sweet_spot
