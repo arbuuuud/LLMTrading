@@ -197,10 +197,11 @@ bool SendString(string data)
       return false;
 
    uchar buffer[];
-   int len = StringToCharArray(data, buffer) - 1; // Drop null terminator
+   int len = StringToCharArray(data, buffer, 0, -1, CP_UTF8) - 1; // Drop null terminator, explicit UTF-8
    if(len <= 0)
       return false;
 
+   ResetLastError();
    int sent = SocketSend(m_socket, buffer, len);
    if(sent == len)
    {
@@ -211,8 +212,8 @@ bool SendString(string data)
    int err = GetLastError();
    m_consecutive_send_fails++;
 
-   // If temporary timeout (5273) on high frequency tick, don't tear down socket
-   if(err == 5273 && m_consecutive_send_fails < 10)
+   // If temporary failure on high-frequency tick, do not tear down socket
+   if(m_consecutive_send_fails < 5)
    {
       return false; // Skip this individual tick cleanly
    }
@@ -231,14 +232,19 @@ void PollIncomingCommands()
    if(!m_connected || m_socket == INVALID_HANDLE)
       return;
 
-   // Direct non-blocking socket read with 5ms timeout (robust across Wine/macOS/Windows)
-   uchar buffer[];
-   ArrayResize(buffer, 4096);
-   int received = SocketRead(m_socket, buffer, 4096, 5);
-   if(received > 0)
+   // Only read when bytes are ready to avoid socket timeout error 5273
+   uint readable = SocketIsReadable(m_socket);
+   if(readable > 0)
    {
-      string chunk = CharArrayToString(buffer, 0, received, CP_UTF8);
-      m_incoming_buffer += chunk;
+      uchar buffer[];
+      ArrayResize(buffer, readable + 32);
+      ResetLastError();
+      int received = SocketRead(m_socket, buffer, readable, InpTimeoutMs);
+      if(received > 0)
+      {
+         string chunk = CharArrayToString(buffer, 0, received, CP_UTF8);
+         m_incoming_buffer += chunk;
+      }
    }
 
    // Process complete newline-delimited JSON commands from stream buffer
