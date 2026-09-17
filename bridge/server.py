@@ -1380,9 +1380,9 @@ class LiveBridgeServer:
 
         e1_checklist = [
             {"label": "Golden Window (10:30-14:30 UTC)", "ok": in_golden_window, "val": golden_desc},
-            {"label": "H1 EMA 50 Macro Guardrail", "ok": macro_ok, "val": macro_detail},
+            {"label": "H4 EMA 50 Macro Guardrail", "ok": macro_ok, "val": macro_detail},
             {"label": "VWAP Band Stretch (>= 1.80σ)", "ok": band_reached, "val": f"{stretch_sigma:+.2f}σ (Target: ±1.80σ | VWAP: {vwap:.2f})"},
-            {"label": "M1 Rejection Wick Trigger", "ok": wick_status_ok, "val": wick_desc},
+            {"label": "M3 Rejection Wick Trigger", "ok": wick_status_ok, "val": wick_desc},
             {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": f"Clear to trade (Base Risk: 0.5%)"}
         ]
 
@@ -1390,11 +1390,11 @@ class LiveBridgeServer:
         if len(self.intraday_adapter.positions) > 0:
             e2_state = "IN_POSITION"
             e2_state_badge = "badge-blue"
-            e2_desc = "Managing Active M15 Intraday Swing Position"
+            e2_desc = "Managing Active M15/M3 Intraday Sniper Position (RR 1:5.0)"
         else:
             e2_state = "SCANNING"
             e2_state_badge = "badge-cyan"
-            e2_desc = "Scanning M15 Structure for Unfilled DBR/RBD Bases"
+            e2_desc = "Scanning M15/M3 Structure for Unfilled Bases + Fibo OTE"
 
         demand_zones = getattr(self.intraday_strategy, "demand_zones", [])
         supply_zones = getattr(self.intraday_strategy, "supply_zones", [])
@@ -1418,9 +1418,10 @@ class LiveBridgeServer:
 
         e2_checklist = [
             {"label": "Skeptical UFO Base (NFC v2)", "ok": bool(nearest_demand or nearest_supply), "val": ufo_label},
-            {"label": "Zone Retest & Proximity", "ok": False, "val": f"Nearest Demand: {dist_demand_pips} pips away" if nearest_demand else "Waiting for mitigation retest"},
-            {"label": "Market Auction Valuation", "ok": True, "val": "Discount for Buy / Premium for Sell (New Normal)"},
-            {"label": "M15 Rejection Wick Trigger", "ok": False, "val": "Waiting for bar-close confirmation"}
+            {"label": "Fibonacci OTE (61.8% - 78.6%)", "ok": True, "val": "Golden Pocket Retracement Filter Active"},
+            {"label": "Strict Equilibrium 50% Rule", "ok": True, "val": "Buy in Discount (<50%) / Sell in Premium (>50%)"},
+            {"label": "LTF M3 Rejection Wick Trigger", "ok": False, "val": "Waiting for M3 Rejection Wick (RR 1:5.0)"},
+            {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": "Clear to trade (Live Fire UNLOCKED)"}
         ]
 
         curr_bar = self.aggregator.current_m1_bar
@@ -1460,7 +1461,7 @@ class LiveBridgeServer:
             },
             "latest_order_receipt": self.latest_order_receipt,
             "engine_1": {
-                "name": "M1 Session Anchored VWAP Scalper",
+                "name": "M3 Session Anchored VWAP Scalper",
                 "magic": 1001,
                 "state": e1_state,
                 "state_desc": e1_desc,
@@ -1477,7 +1478,7 @@ class LiveBridgeServer:
                 "checklist": e1_checklist
             },
             "engine_2": {
-                "name": "M15 Fadli NFC Intraday",
+                "name": "Intraday M15/M3 NFC Sniper (Fibo OTE)",
                 "magic": 2001,
                 "state": e2_state,
                 "state_desc": e2_desc,

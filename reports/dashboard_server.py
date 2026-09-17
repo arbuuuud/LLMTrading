@@ -216,7 +216,7 @@ def _build_fallback_radar():
             "estimated_lot": 0.12
         },
         "engine_1": {
-            "name": "M1 Session Anchored VWAP Scalper",
+            "name": "M3 Session Anchored VWAP Scalper",
             "magic": 1001,
             "state": "HUNTING" if in_golden else "STANDBY",
             "state_desc": "Monitoring Auction Value Area for Overextension" if in_golden else "Outside Golden Window (10:30-14:30 UTC)",
@@ -232,17 +232,17 @@ def _build_fallback_radar():
             "macro_ema50": round(mid - 2.50, 2),
             "checklist": [
                 {"label": "Golden Window (10:30-14:30 UTC)", "ok": in_golden, "val": golden_desc},
-                {"label": "H1 EMA 50 Macro Guardrail", "ok": True, "val": f"Aligned with H1 Trend (EMA 50: {mid - 2.50:.2f})"},
+                {"label": "H4 EMA 50 Macro Guardrail", "ok": True, "val": f"Aligned with H4 Trend (EMA 50: {mid - 2.50:.2f})"},
                 {"label": "VWAP Band Stretch (>= 1.80σ)", "ok": False, "val": f"{stretch_sigma:+.2f}σ (Target: ±1.80σ | Band: {upper:.2f})"},
-                {"label": "M1 Rejection Wick Trigger", "ok": False, "val": "Waiting M1 Bar Close with >= 45% wick"},
+                {"label": "M3 Rejection Wick Trigger", "ok": False, "val": "Waiting M3 Bar Close with >= 45% wick (Tick SL)"},
                 {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": "Clear to trade (Base Risk: 0.5%)"}
             ]
         },
         "engine_2": {
-            "name": "M15 Fadli NFC Intraday",
+            "name": "Intraday M15/M3 NFC Sniper",
             "magic": 2001,
             "state": "SCANNING",
-            "state_desc": "Scanning M15 Structure for Unfilled DBR/RBD Bases",
+            "state_desc": "Scanning M15/M3 Structure for Unfilled Bases + Fibo OTE",
             "state_badge": "badge-cyan",
             "nearest_demand": {"top": round(mid - 12.0, 2), "bottom": round(mid - 15.0, 2)},
             "nearest_supply": {"top": round(mid + 18.0, 2), "bottom": round(mid + 15.0, 2)},
@@ -250,9 +250,10 @@ def _build_fallback_radar():
             "dist_supply_pips": 150.0,
             "checklist": [
                 {"label": "Skeptical UFO Base (NFC v2)", "ok": True, "val": "RBR Demand Base (Score: 75pts)"},
-                {"label": "Zone Retest & Proximity", "ok": False, "val": "Nearest Demand: 120.0 pips away"},
-                {"label": "Market Auction Valuation", "ok": True, "val": "Discount for Buy / Premium for Sell (New Normal)"},
-                {"label": "M15 Rejection Wick Trigger", "ok": False, "val": "Waiting for bar-close confirmation"}
+                {"label": "Fibonacci OTE (61.8% - 78.6%)", "ok": True, "val": "Golden Pocket Retracement Confirmed"},
+                {"label": "Strict Equilibrium 50% Rule", "ok": True, "val": "Buy strictly in Discount (<50% Range)"},
+                {"label": "LTF M3 Rejection Wick Trigger", "ok": False, "val": "Waiting for M3 Rejection Wick (RR 1:5.0)"},
+                {"label": "Monthly Ratchet Risk Clearance", "ok": True, "val": "Clear to trade (Live Fire UNLOCKED)"}
             ]
         },
         "bars_m1": bars_m1,
@@ -372,6 +373,28 @@ class InstitutionalDashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/radar":
             return self._send_json(get_radar_snapshot_for_dashboard())
+
+        elif path == "/api/audits/summary":
+            # Consolidates all institutional audit JSONs for the Audits Hub tab
+            audit_data = {}
+            for name, fname in [
+                ("synergy", "dual_engine_portfolio_synergy.json"),
+                ("monte_carlo", "monte_carlo_dual_engine_audit.json"),
+                ("falsification_e1", "falsification_audit_modern_era.json"),
+                ("falsification_e2", "falsification_agent2_sniper.json"),
+                ("walk_forward_e1", "walk_forward_audit_modern_era.json"),
+                ("walk_forward_e2", "walk_forward_agent2_sniper.json"),
+                ("kagebunshin_e1", "kagebunshin_modern_era_2010_2026.json"),
+                ("kagebunshin_e2", "kagebunshin_agent2_sniper_audit.json"),
+            ]:
+                fpath = REPORTS_DIR / fname
+                if fpath.exists():
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            audit_data[name] = json.load(f)
+                    except Exception:
+                        pass
+            return self._send_json(audit_data)
 
         elif path == "/api/order/receipt":
             receipt_file = REPORTS_DIR / "order_receipt.json"
