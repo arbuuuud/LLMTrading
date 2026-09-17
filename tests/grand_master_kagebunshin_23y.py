@@ -1,14 +1,15 @@
 """
 Grand Master Kage Bunshin: 23.3-Year Institutional Parallel Tournament (2003 - 2026).
-Simulates 12 distinct multi-dimensional clones across 7,934,247 M1 bars testing:
-1. ATR Buffers (1.5x vs 1.0x)
-2. Execution Modes (Market on Close vs Resting Limit)
-3. Macro Trend Filters (H1 EMA 50 & $15 Parabolic Guard)
-4. Fractal MTF Sweet Spots (M1 vs M2 vs M3)
-5. Trade Management (Fixed 1:2 RR vs Callisto Twin 50/50 Breakeven Ratchet)
-6. Stop Loss Models (Anti-Wick Bar-Close SL vs Tick-Touch SL)
-7. Anti-Overfitting Partitioning (Train 2003-2019, Val 2020-2023, Blind OOS 2024-2026)
-8. 1,000-Iteration Monte Carlo Stress Test (P95 Max DD, Risk of Ruin)
+Simulates 60+ distinct multi-dimensional clones across 7,934,247 M1 bars testing:
+1. Timeframes (M1, M2, M3)
+2. Macro Trend Mechanics (BASELINE, BINARY_VETO, ASYMMETRIC_SIZING, DYNAMIC_TARGET, ATR_BUFFER)
+3. H1 EMA Periods (20, 50, 100, 200)
+4. Stop Loss Styles (SSOT WICK_BUFFER vs ATR_DISTANCE)
+5. Stop Loss Execution Models (BAR_CLOSE Anti-Wick vs TICK_TOUCH)
+6. Order Types (MARKET_ON_CLOSE vs RESTING_LIMIT)
+7. Trade Management (VWAP_OR_RR vs CALLISTO_BE_TWIN)
+8. Anti-Overfitting Partitioning (Train 2003-2019, Val 2020-2023, Blind OOS 2024-2026)
+9. 1,000-Iteration Monte Carlo Stress Test (P95 Max DD, Risk of Ruin)
 """
 
 import sys
@@ -24,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from engine.monte_carlo.simulator import MonteCarloSimulator, MonteCarloReport
+from engine.monte_carlo.simulator import MonteCarloSimulator
 
 M1_PATH = Path("data/processed/bars/XAUUSD/M1/XAUUSD_M1_2003_2026.parquet")
 M2_PATH = Path("data/processed/bars/XAUUSD/HTF/XAUUSD_M2_2003_2026.parquet")
@@ -36,19 +37,24 @@ H1_PATH = Path("data/processed/bars/XAUUSD/HTF/XAUUSD_H1_2003_2026.parquet")
 class CloneConfig:
     id: str
     name: str
-    timeframe: str         # "M1", "M2", "M3"
-    atr_mult: float        # 1.0 or 1.5
-    exec_mode: str         # "MARKET_ON_CLOSE" or "RESTING_LIMIT"
-    macro_filter: str      # "NONE", "H1_EMA50", "H1_EMA50_PARABOLIC"
-    exit_model: str        # "FIXED_RR", "CALLISTO_BE_TWIN"
-    sl_model: str          # "BAR_CLOSE", "TICK_TOUCH"
-    base_risk_pct: float   # 0.5%
+    timeframe: str              # "M1", "M2", "M3"
+    mechanic: str               # "BASELINE", "BINARY_VETO", "ASYMMETRIC_SIZING", "DYNAMIC_TARGET", "ATR_BUFFER"
+    ema_period: int             # 0, 20, 50, 100, 200
+    with_trend_risk: float      # 0.50 or 0.65
+    counter_trend_risk: float   # 0.20, 0.35, or 0.50
+    with_trend_rr: float        # 2.0, 2.5, 3.0
+    counter_trend_rr: float     # 1.5, 1.8, 2.0
+    sl_style: str               # "WICK_BUFFER" or "ATR_DISTANCE"
+    sl_model: str               # "BAR_CLOSE" or "TICK_TOUCH"
+    exec_mode: str              # "MARKET_ON_CLOSE" or "RESTING_LIMIT"
+    exit_model: str             # "VWAP_OR_RR" or "CALLISTO_BE_TWIN"
+    atr_mult: float             # 1.0 or 1.5
 
 
 def load_and_preprocess_datasets() -> Dict[str, Dict[str, np.ndarray]]:
-    print("=" * 80)
-    print("⚡ GRAND MASTER KAGE BUNSHIN: 23.3-YEAR MULTI-DIMENSIONAL ENGINE (2003 - 2026)")
-    print("=" * 80)
+    print("=" * 100)
+    print("⚡ GRAND MASTER KAGE BUNSHIN: 60+ SHADOW CLONES TOURNAMENT (2003 - 2026 / 23.3 YEARS)")
+    print("=" * 100)
     t0 = time.time()
 
     print("[Phase 1/3] Loading M1, M2, M3, and H1 Parquets...")
@@ -58,16 +64,19 @@ def load_and_preprocess_datasets() -> Dict[str, Dict[str, np.ndarray]]:
     df_h1 = pl.read_parquet(H1_PATH)
     print(f"  -> Loaded {len(df_m1):,} M1 bars & HTF series in {time.time() - t0:.2f}s.")
 
-    # Precompute Macro H1 EMA 50
-    print("[Phase 2/3] Precomputing Macro H1 EMA 50...")
+    # Precompute Macro H1 EMAs (20, 50, 100, 200) & ATR(14)
+    print("[Phase 2/3] Precomputing Macro H1 EMAs (20, 50, 100, 200) & ATR...")
     df_h1_enriched = df_h1.with_columns([
         pl.col("timestamp").alias("h1_time"),
-        pl.col("close").ewm_mean(span=50).alias("h1_ema50")
-    ]).select(["h1_time", "h1_ema50"])
+        pl.col("close").ewm_mean(span=20).alias("h1_ema20"),
+        pl.col("close").ewm_mean(span=50).alias("h1_ema50"),
+        pl.col("close").ewm_mean(span=100).alias("h1_ema100"),
+        pl.col("close").ewm_mean(span=200).alias("h1_ema200"),
+        (pl.col("high") - pl.col("low")).rolling_mean(window_size=14).alias("h1_atr14")
+    ]).select(["h1_time", "h1_ema20", "h1_ema50", "h1_ema100", "h1_ema200", "h1_atr14"])
 
     def enrich_and_extract_arrays(df: pl.DataFrame, name: str) -> Dict[str, np.ndarray]:
         t_sub = time.time()
-        print(f"  -> Processing {name} ({len(df):,} bars)...")
 
         df_e = df.with_columns([
             pl.col("timestamp").dt.year().alias("year"),
@@ -108,10 +117,14 @@ def load_and_preprocess_datasets() -> Dict[str, Dict[str, np.ndarray]]:
             (pl.col("upper_wick") / pl.when(pl.col("range") > 0).then(pl.col("range")).otherwise(1.0)).alias("upper_wick_ratio"),
         ])
 
-        # Left join H1 EMA 50
-        df_e = df_e.join(df_h1_enriched, on="h1_time", how="left").with_columns(
-            pl.col("h1_ema50").fill_null(pl.col("close"))
-        )
+        # Left join H1 EMAs and ATR
+        df_e = df_e.join(df_h1_enriched, on="h1_time", how="left").with_columns([
+            pl.col("h1_ema20").fill_null(pl.col("close")),
+            pl.col("h1_ema50").fill_null(pl.col("close")),
+            pl.col("h1_ema100").fill_null(pl.col("close")),
+            pl.col("h1_ema200").fill_null(pl.col("close")),
+            pl.col("h1_atr14").fill_null(5.0)
+        ])
 
         # Filter Golden Window: 10:30 - 14:30 UTC
         golden = df_e.filter(
@@ -127,6 +140,7 @@ def load_and_preprocess_datasets() -> Dict[str, Dict[str, np.ndarray]]:
             "lows": golden["low"].to_numpy(),
             "closes": golden["close"].to_numpy(),
             "opens": golden["open"].to_numpy(),
+            "ranges": golden["range"].to_numpy(),
             "spreads": golden["mean_spread"].to_numpy(),
             "vwaps": golden["vwap"].to_numpy(),
             "upper_18": golden["upper_18"].to_numpy(),
@@ -134,8 +148,11 @@ def load_and_preprocess_datasets() -> Dict[str, Dict[str, np.ndarray]]:
             "lower_wick": golden["lower_wick_ratio"].to_numpy(),
             "upper_wick": golden["upper_wick_ratio"].to_numpy(),
             "atr": golden["atr14"].fill_null(2.50).to_numpy(),
-            "macro_ema": golden["h1_ema50"].to_numpy(),
-            "timestamps": golden["timestamp"].to_numpy()
+            "h1_ema20": golden["h1_ema20"].to_numpy(),
+            "h1_ema50": golden["h1_ema50"].to_numpy(),
+            "h1_ema100": golden["h1_ema100"].to_numpy(),
+            "h1_ema200": golden["h1_ema200"].to_numpy(),
+            "h1_atr14": golden["h1_atr14"].to_numpy(),
         }
         print(f"     Golden window {name}: {len(arrs['closes']):,} bars prepared in {time.time() - t_sub:.2f}s.")
         return arrs
@@ -146,7 +163,7 @@ def load_and_preprocess_datasets() -> Dict[str, Dict[str, np.ndarray]]:
         "M2": enrich_and_extract_arrays(df_m2, "M2"),
         "M3": enrich_and_extract_arrays(df_m3, "M3"),
     }
-    print("✅ Preprocessing complete! Ready for multi-clone simulation.")
+    print("✅ Preprocessing complete! Ready for 60+ multi-clone simulation.")
     return tf_arrays
 
 
@@ -158,9 +175,6 @@ class FastTrade:
 
 
 def simulate_clone(config: CloneConfig, tf_arrays: Dict[str, Dict[str, np.ndarray]]) -> Dict[str, Any]:
-    """
-    Executes a single clone over the 23.3-year historical dataset with high-speed NumPy arrays.
-    """
     arrs = tf_arrays[config.timeframe]
 
     years = arrs["years"]
@@ -169,6 +183,7 @@ def simulate_clone(config: CloneConfig, tf_arrays: Dict[str, Dict[str, np.ndarra
     lows = arrs["lows"]
     closes = arrs["closes"]
     opens = arrs["opens"]
+    ranges = arrs["ranges"]
     spreads = arrs["spreads"]
     vwaps = arrs["vwaps"]
     upper_18 = arrs["upper_18"]
@@ -176,13 +191,22 @@ def simulate_clone(config: CloneConfig, tf_arrays: Dict[str, Dict[str, np.ndarra
     lower_wick = arrs["lower_wick"]
     upper_wick = arrs["upper_wick"]
     atr = arrs["atr"]
-    macro_ema = arrs["macro_ema"]
+    h1_atr = arrs["h1_atr14"]
+
+    # Select appropriate EMA array
+    if config.ema_period == 20:
+        macro_ema = arrs["h1_ema20"]
+    elif config.ema_period == 100:
+        macro_ema = arrs["h1_ema100"]
+    elif config.ema_period == 200:
+        macro_ema = arrs["h1_ema200"]
+    else:
+        macro_ema = arrs["h1_ema50"]
 
     n_bars = len(closes)
 
     trades: List[FastTrade] = []
     equity = 10000.0
-    initial_balance = 10000.0
     peak_equity = 10000.0
     max_dd_pct = 0.0
 
@@ -197,6 +221,7 @@ def simulate_clone(config: CloneConfig, tf_arrays: Dict[str, Dict[str, np.ndarra
 
     daily_pnl = 0.0
     cur_day = -1
+    daily_trades = 0
     daily_losses = 0
 
     yearly_pnl = {y: 0.0 for y in range(2003, 2027)}
@@ -213,6 +238,7 @@ def simulate_clone(config: CloneConfig, tf_arrays: Dict[str, Dict[str, np.ndarra
         if d != cur_day:
             cur_day = d
             daily_pnl = 0.0
+            daily_trades = 0
             daily_losses = 0
 
         # Position Management
@@ -285,78 +311,120 @@ def simulate_clone(config: CloneConfig, tf_arrays: Dict[str, Dict[str, np.ndarra
                 bars_held = 0
             continue
 
-        # 2-Strike rule
-        if daily_losses >= 2 or daily_pnl <= -100.0:
+        # Governor 2-Strike rule & daily loss cap
+        if daily_trades >= 2 or daily_losses >= 2 or daily_pnl <= -100.0:
             continue
 
-        # Spread & VWAP validity
+        # Spread & minimal range filters
         sp = spreads[i]
         vw = vwaps[i]
         at = atr[i]
         me = macro_ema[i]
+        h_atr = h1_atr[i]
         low_18 = lower_18[i]
         up_18 = upper_18[i]
+        rg = ranges[i]
 
-        if sp > 0.45 or vw <= 0:
+        if sp > 0.45 or rg < 0.35 or vw <= 0:
             continue
 
-        # Parabolic Guard
-        if config.macro_filter == "H1_EMA50_PARABOLIC" and abs(c - me) > 15.0:
-            continue
+        # Evaluate Macro Trend
+        is_bull = (c > me)
+        is_bear = (c < me)
 
+        allow_buy = True
+        allow_sell = True
+        buy_risk = config.with_trend_risk
+        sell_risk = config.with_trend_risk
+        buy_rr = config.with_trend_rr
+        sell_rr = config.with_trend_rr
+
+        if config.mechanic == "BINARY_VETO":
+            if is_bull:
+                allow_sell = False
+            elif is_bear:
+                allow_buy = False
+
+        elif config.mechanic == "ASYMMETRIC_SIZING":
+            if is_bull:
+                buy_risk = config.with_trend_risk
+                sell_risk = config.counter_trend_risk
+            else:
+                buy_risk = config.counter_trend_risk
+                sell_risk = config.with_trend_risk
+
+        elif config.mechanic == "DYNAMIC_TARGET":
+            if is_bull:
+                buy_rr = config.with_trend_rr
+                sell_rr = config.counter_trend_rr
+            else:
+                buy_rr = config.counter_trend_rr
+                sell_rr = config.with_trend_rr
+
+        elif config.mechanic == "ATR_BUFFER":
+            if is_bear and (me - c) > (config.atr_mult * h_atr):
+                allow_buy = False
+            if is_bull and (c - me) > (config.atr_mult * h_atr):
+                allow_sell = False
+
+        # BUY trigger
         buy_signal = False
         sell_signal = False
 
         if config.exec_mode == "MARKET_ON_CLOSE":
-            # BUY: Low <= lower_18, lower wick >= 45%, Green Close
-            if l <= low_18 and lower_wick[i] >= 0.45 and c > o:
-                if config.macro_filter in ("H1_EMA50", "H1_EMA50_PARABOLIC") and c < me:
-                    pass
-                else:
-                    buy_signal = True
-
-            # SELL: High >= upper_18, upper wick >= 45%, Red Close
-            if h >= up_18 and upper_wick[i] >= 0.45 and c < o:
-                if config.macro_filter in ("H1_EMA50", "H1_EMA50_PARABOLIC") and c > me:
-                    pass
-                else:
-                    sell_signal = True
-
-        elif config.exec_mode == "RESTING_LIMIT":
-            if l <= low_18:
+            if l <= low_18 and lower_wick[i] >= 0.45 and c > o and allow_buy:
                 buy_signal = True
-            elif h >= up_18:
+            elif h >= up_18 and upper_wick[i] >= 0.45 and c < o and allow_sell:
+                sell_signal = True
+        elif config.exec_mode == "RESTING_LIMIT":
+            if l <= low_18 and allow_buy:
+                buy_signal = True
+            elif h >= up_18 and allow_sell:
                 sell_signal = True
 
         if buy_signal:
-            in_position = True
-            pos_dir = 1
             pos_entry = low_18 if config.exec_mode == "RESTING_LIMIT" else c
-            sl_dist = max(1.0, at * config.atr_mult)
-            pos_sl = pos_entry - sl_dist
-            rr = 2.5 if config.exit_model == "CALLISTO_BE_TWIN" else 2.0
-            pos_tp = pos_entry + (sl_dist * rr)
-            bars_held = 0
-            half_closed = False
+            if config.sl_style == "WICK_BUFFER":
+                pos_sl = round(l - 0.50, 2)
+                risk = round(pos_entry - pos_sl, 2)
+            else:
+                risk = round(max(0.80, at * config.atr_mult), 2)
+                pos_sl = round(pos_entry - risk, 2)
 
-            risk_dollars = equity * (config.base_risk_pct / 100.0)
-            calculated_lots = risk_dollars / (sl_dist * 100.0)
-            pos_lots = round(max(0.01, min(5.0, calculated_lots)), 2)
+            if 0.80 <= risk <= 5.00:
+                pos_tp = round(pos_entry + (risk * buy_rr), 2)
+                if config.exit_model == "VWAP_OR_RR" and vw > pos_entry and (vw - pos_entry) >= risk * 1.5:
+                    pos_tp = round(vw, 2)
+
+                risk_dollars = equity * (buy_risk / 100.0)
+                pos_lots = round(max(0.01, min(5.0, risk_dollars / (risk * 100.0))), 2)
+                in_position = True
+                pos_dir = 1
+                bars_held = 0
+                half_closed = False
+                daily_trades += 1
 
         elif sell_signal:
-            in_position = True
-            pos_dir = -1
             pos_entry = up_18 if config.exec_mode == "RESTING_LIMIT" else c
-            sl_dist = max(1.0, at * config.atr_mult)
-            pos_sl = pos_entry + sl_dist
-            rr = 2.5 if config.exit_model == "CALLISTO_BE_TWIN" else 2.0
-            pos_tp = pos_entry - (sl_dist * rr)
-            bars_held = 0
-            half_closed = False
+            if config.sl_style == "WICK_BUFFER":
+                pos_sl = round(h + 0.50, 2)
+                risk = round(pos_sl - pos_entry, 2)
+            else:
+                risk = round(max(0.80, at * config.atr_mult), 2)
+                pos_sl = round(pos_entry + risk, 2)
 
-            risk_dollars = equity * (config.base_risk_pct / 100.0)
-            calculated_lots = risk_dollars / (sl_dist * 100.0)
-            pos_lots = round(max(0.01, min(5.0, calculated_lots)), 2)
+            if 0.80 <= risk <= 5.00:
+                pos_tp = round(pos_entry - (risk * sell_rr), 2)
+                if config.exit_model == "VWAP_OR_RR" and vw < pos_entry and (pos_entry - vw) >= risk * 1.5:
+                    pos_tp = round(vw, 2)
+
+                risk_dollars = equity * (sell_risk / 100.0)
+                pos_lots = round(max(0.01, min(5.0, risk_dollars / (risk * 100.0))), 2)
+                in_position = True
+                pos_dir = -1
+                bars_held = 0
+                half_closed = False
+                daily_trades += 1
 
     # Performance Metrics
     net_pnls = [t.net_pnl for t in trades]
@@ -422,64 +490,128 @@ def simulate_clone(config: CloneConfig, tf_arrays: Dict[str, Dict[str, np.ndarra
     }
 
 
+def generate_60_clone_specifications() -> List[CloneConfig]:
+    configs = []
+    c_idx = 1
+
+    # 1. Baseline Benchmark across M1, M2, M3
+    for tf in ["M1", "M2", "M3"]:
+        configs.append(CloneConfig(
+            f"C{c_idx:02d}", f"Baseline Pure VWAP 1.8s ({tf})", tf,
+            "BASELINE", 0, 0.50, 0.50, 2.0, 2.0, "WICK_BUFFER", "BAR_CLOSE", "MARKET_ON_CLOSE", "VWAP_OR_RR", 1.5
+        ))
+        c_idx += 1
+
+    # 2. Binary Veto across Timeframes & EMA periods (20, 50, 100, 200)
+    for tf in ["M1", "M2", "M3"]:
+        for ema in [20, 50, 100, 200]:
+            configs.append(CloneConfig(
+                f"C{c_idx:02d}", f"Binary Veto {tf} H1 EMA {ema}", tf,
+                "BINARY_VETO", ema, 0.50, 0.50, 2.0, 2.0, "WICK_BUFFER", "BAR_CLOSE", "MARKET_ON_CLOSE", "VWAP_OR_RR", 1.5
+            ))
+            c_idx += 1
+
+    # 3. Asymmetric Sizing: With-trend 0.65% vs Counter-trend 0.20% or 0.35%
+    for tf in ["M1", "M2"]:
+        for ema in [50, 100, 200]:
+            for c_risk in [0.20, 0.35]:
+                configs.append(CloneConfig(
+                    f"C{c_idx:02d}", f"Asymm Sizing {tf} EMA {ema} (With 0.65% / Counter {int(c_risk*100)}%)", tf,
+                    "ASYMMETRIC_SIZING", ema, 0.65, c_risk, 2.0, 2.0, "WICK_BUFFER", "BAR_CLOSE", "MARKET_ON_CLOSE", "VWAP_OR_RR", 1.5
+                ))
+                c_idx += 1
+
+    # 4. Dynamic Target Expansion: With-trend 2.5R/3.0R vs Counter-trend 1.5R/VWAP
+    for tf in ["M1", "M2"]:
+        for ema in [20, 50, 200]:
+            for w_rr in [2.5, 3.0]:
+                configs.append(CloneConfig(
+                    f"C{c_idx:02d}", f"Dynamic Target {tf} EMA {ema} (With {w_rr}R / Counter 1.5R)", tf,
+                    "DYNAMIC_TARGET", ema, 0.50, 0.50, w_rr, 1.5, "WICK_BUFFER", "BAR_CLOSE", "MARKET_ON_CLOSE", "VWAP_OR_RR", 1.5
+                ))
+                c_idx += 1
+
+    # 5. ATR Buffer Gate: Only veto counter-trend if distance > 1.0x or 1.5x ATR
+    for tf in ["M1", "M2"]:
+        for ema in [50, 200]:
+            for mult in [1.0, 1.5, 2.0]:
+                configs.append(CloneConfig(
+                    f"C{c_idx:02d}", f"ATR Buffer {tf} EMA {ema} (Dist > {mult}x ATR)", tf,
+                    "ATR_BUFFER", ema, 0.65, 0.35, 2.5, 1.8, "WICK_BUFFER", "BAR_CLOSE", "MARKET_ON_CLOSE", "VWAP_OR_RR", mult
+                ))
+                c_idx += 1
+
+    # 6. Stop Loss Model Comparison: WICK_BUFFER vs ATR_DISTANCE vs TICK_TOUCH
+    for sl_m in ["BAR_CLOSE", "TICK_TOUCH"]:
+        for style in ["WICK_BUFFER", "ATR_DISTANCE"]:
+            for mult in [1.0, 1.5]:
+                configs.append(CloneConfig(
+                    f"C{c_idx:02d}", f"SL Audit M1 ({style} {mult}x | {sl_m})", "M1",
+                    "ATR_BUFFER", 50, 0.50, 0.35, 2.0, 1.8, style, sl_m, "MARKET_ON_CLOSE", "VWAP_OR_RR", mult
+                ))
+                c_idx += 1
+
+    # 7. Order Execution Type: MARKET_ON_CLOSE vs RESTING_LIMIT
+    for exec_m in ["MARKET_ON_CLOSE", "RESTING_LIMIT"]:
+        for tf in ["M1", "M2"]:
+            for exit_m in ["VWAP_OR_RR", "CALLISTO_BE_TWIN"]:
+                configs.append(CloneConfig(
+                    f"C{c_idx:02d}", f"Exec Mode {tf} {exec_m} ({exit_m})", tf,
+                    "ATR_BUFFER", 50, 0.50, 0.35, 2.5, 1.8, "WICK_BUFFER", "BAR_CLOSE", exec_m, exit_m, 1.5
+                ))
+                c_idx += 1
+
+    return configs
+
+
 def run_tournament():
     tf_arrays = load_and_preprocess_datasets()
+    configs = generate_60_clone_specifications()
 
-    configs = [
-        CloneConfig("C01", "Baseline Scalper 1.5x ATR (10M Overfit)", "M1", 1.5, "MARKET_ON_CLOSE", "NONE", "FIXED_RR", "BAR_CLOSE", 0.5),
-        CloneConfig("C02", "Champion 1.0x ATR (16Y Candidate)", "M1", 1.0, "MARKET_ON_CLOSE", "NONE", "FIXED_RR", "BAR_CLOSE", 0.5),
-        CloneConfig("C03", "1.0x ATR + H1 EMA 50 Macro Bias", "M1", 1.0, "MARKET_ON_CLOSE", "H1_EMA50", "FIXED_RR", "BAR_CLOSE", 0.5),
-        CloneConfig("C04", "1.0x ATR + H1 EMA 50 + Parabolic $15", "M1", 1.0, "MARKET_ON_CLOSE", "H1_EMA50_PARABOLIC", "FIXED_RR", "BAR_CLOSE", 0.5),
-        CloneConfig("C05", "1.0x ATR + Resting Limit at Bands", "M1", 1.0, "RESTING_LIMIT", "H1_EMA50_PARABOLIC", "FIXED_RR", "BAR_CLOSE", 0.5),
-        CloneConfig("C06", "1.0x ATR + Tick-Touch SL (No Anti-Wick)", "M1", 1.0, "MARKET_ON_CLOSE", "H1_EMA50_PARABOLIC", "FIXED_RR", "TICK_TOUCH", 0.5),
-        CloneConfig("C07", "1.0x ATR + Callisto Twin 50/50 BE", "M1", 1.0, "MARKET_ON_CLOSE", "H1_EMA50_PARABOLIC", "CALLISTO_BE_TWIN", "BAR_CLOSE", 0.5),
-        CloneConfig("C08", "M2 Fractal Sweet Spot (Anti-Noise M1)", "M2", 1.0, "MARKET_ON_CLOSE", "H1_EMA50_PARABOLIC", "CALLISTO_BE_TWIN", "BAR_CLOSE", 0.5),
-        CloneConfig("C09", "M3 Fractal Sweet Spot", "M3", 1.0, "MARKET_ON_CLOSE", "H1_EMA50_PARABOLIC", "CALLISTO_BE_TWIN", "BAR_CLOSE", 0.5),
-        CloneConfig("C10", "Grand Master Confluence (M2+Limit+Callisto)", "M2", 1.0, "RESTING_LIMIT", "H1_EMA50_PARABOLIC", "CALLISTO_BE_TWIN", "BAR_CLOSE", 0.5),
-    ]
-
-    print(f"\n[Tournament] Launching {len(configs)} Shadow Clones across 23.3 Years...")
+    print(f"\n[Tournament] Launching {len(configs)} Grand Master Shadow Clones across 23.3 Years...")
     results = []
     t_start = time.time()
 
     for i, cfg in enumerate(configs, 1):
         t_sub = time.time()
-        print(f"[{i:02d}/{len(configs):02d}] Executing Clone {cfg.id}: {cfg.name}...")
         res = simulate_clone(cfg, tf_arrays)
         results.append(res)
-        print(f"       -> Done in {time.time() - t_sub:.2f}s | Net PnL: ${res['net_pnl']:+,.2f} | PF: {res['profit_factor']} | Max DD: {res['max_drawdown_pct']}% | MC P95 DD: {res['mc_p95_dd']}% | Win: {res['positive_years']} Yrs")
+        elapsed = time.time() - t_sub
+        if i % 10 == 0 or i == 1 or i == len(configs) or res["net_pnl"] > 0:
+            status_icon = "🟢" if res["net_pnl"] > 0 else "🔴"
+            print(f"[{i:02d}/{len(configs):02d}] {status_icon} {cfg.name:<60} | PnL: ${res['net_pnl']:>10,.2f} | PF: {res['profit_factor']:>4.2f} | Win: {res['win_rate']:>4.1f}% | DD: {res['max_drawdown_pct']:>4.1f}% | MC P95: {res['mc_p95_dd']:>5.1f}% ({elapsed:.2f}s)")
 
     total_time = time.time() - t_start
 
     # Format Tournament Leaderboard
-    print("\n" + "=" * 140)
-    print("🏆 GRAND MASTER KAGE BUNSHIN TOURNAMENT LEADERBOARD (2003 - 2026 / 23.3 YEARS)")
-    print("   [ANTI-OVERFITTING & MONTE CARLO STRESS TEST AUDIT (Train 2003-2019 vs OOS 2024-2026)]")
-    print("=" * 140)
-    header = f"{'ID':<4} | {'Clone Strategy Name':<38} | {'Trades':<6} | {'All PF':<6} | {'Net PnL':<12} | {'Max DD':<6} | {'Train PF':<8} | {'OOS PF':<6} | {'MC P95 DD':<9} | {'OOS Verdict':<20} | {'MC Pass':<7}"
+    print("\n" + "=" * 145)
+    print(f"🏆 GRAND MASTER KAGE BUNSHIN TOURNAMENT LEADERBOARD ({len(configs)} CLONES / 2003 - 2026 / 23.3 YEARS)")
+    print("   [RANKED BY NET PNL & PROFIT FACTOR | 70/15/15 ANTI-OVERFITTING & 1,000 MONTE CARLO RUNS]")
+    print("=" * 145)
+    header = f"{'Rank':<5} | {'ID':<4} | {'Clone Strategy Name':<42} | {'Trades':<6} | {'All PF':<6} | {'Net PnL':<12} | {'Max DD':<6} | {'Train PF':<8} | {'OOS PF':<6} | {'MC P95 DD':<9} | {'OOS Verdict':<20} | {'MC Pass':<7}"
     print(header)
-    print("-" * 140)
+    print("-" * 145)
 
-    # Sort results by Profit Factor descending
-    sorted_res = sorted(results, key=lambda x: x["net_pnl"], reverse=True)
+    # Sort results primarily by Net PnL, then Profit Factor
+    sorted_res = sorted(results, key=lambda x: (x["net_pnl"], x["profit_factor"]), reverse=True)
 
-    for r in sorted_res:
+    for rank, r in enumerate(sorted_res[:25], 1):
         pass_str = "✅ YES" if r["mc_pass"] else "❌ NO"
         line = (
-            f"{r['id']:<4} | {r['name']:<38} | {r['total_trades']:<6} | {r['profit_factor']:<6.2f} | "
+            f"#{rank:<4} | {r['id']:<4} | {r['name']:<42} | {r['total_trades']:<6} | {r['profit_factor']:<6.2f} | "
             f"${r['net_pnl']:>+11,.2f} | {r['max_drawdown_pct']:>5.1f}% | {r['pf_train']:<8.2f} | {r['pf_oos']:<6.2f} | "
             f"{r['mc_p95_dd']:>8.1f}% | {r['overfit_status']:<20} | {pass_str:<7}"
         )
         print(line)
 
-    print("=" * 140)
-    print(f"Tournament execution completed in {total_time:.2f}s ({total_time/60:.2f} minutes)!")
+    print("=" * 145)
+    print(f"Grand Master Tournament completed in {total_time:.2f}s ({total_time/60:.2f} minutes)!")
 
     # Save results to reports
     out_json = Path("reports/grand_master_kagebunshin_23y.json")
     with open(out_json, "w") as f:
         json.dump(sorted_res, f, indent=2)
-    print(f"Saved full tournament audit to: {out_json}")
+    print(f"Saved complete audit of all {len(results)} clones to: {out_json}")
 
 
 if __name__ == "__main__":
