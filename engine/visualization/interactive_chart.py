@@ -34,8 +34,8 @@ from engine.execution.slippage import FixedSlippageModel
 from engine.metrics.performance import PerformanceCalculator
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 from strategies.incubator.strat_6_intraday_smc import IntradaySMCStrategy
+from strategies.incubator.strat_nfc_fibo_hybrid import NFCFiboHybridStrategy
 from tests.massive_shadow_clone_ema_grid import MassiveCloneStrategy
-from tests.test_nfc_fibo_hybrid import NFCFiboHybridStrategy
 
 
 def generate_optimized_visual(output_file: str = "reports/backtest_visual.html"):

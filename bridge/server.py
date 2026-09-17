@@ -40,7 +40,7 @@ from agents.risk_manager.monthly_ratchet_governor import MonthlyRatchetGovernor
 from engine.core.types import OrderDirection
 from strategies.incubator.strat_3_anchored_vwap import SessionAnchoredVWAPStrategy
 from strategies.incubator.strat_6_intraday_smc import IntradaySMCStrategy
-from tests.test_nfc_fibo_hybrid import NFCFiboHybridStrategy
+from strategies.incubator.strat_nfc_fibo_hybrid import NFCFiboHybridStrategy
 
 logging.basicConfig(
     level=logging.INFO,
