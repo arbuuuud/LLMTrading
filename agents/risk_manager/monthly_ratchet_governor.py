@@ -146,8 +146,21 @@ class MonthlyRatchetGovernor:
         stop_loss: float,
         current_spread: float,
         max_allowed_spread: float = 0.25,
-        num_open_positions: int = 0
+        num_open_positions: int = 0,
+        current_equity: Optional[float] = None,
+        max_spread: Optional[float] = None
     ) -> RatchetApproval:
+        if max_spread is not None:
+            max_allowed_spread = max_spread
+
+        # Dynamic equity initialization and adaptation per account
+        effective_equity = self.day_start_equity
+        if current_equity is not None and current_equity > 0:
+            if self.day_start_equity == 10000.0 or self.day_start_equity <= 0:
+                self.day_start_equity = current_equity
+                self.month_start_equity = current_equity
+            effective_equity = current_equity
+
         curr_daily_pct = (self.daily_closed_pnl / self.day_start_equity) * 100.0
         curr_monthly_pct = (self.monthly_closed_pnl / self.month_start_equity) * 100.0
 
@@ -197,7 +210,7 @@ class MonthlyRatchetGovernor:
         is_greed = (curr_daily_pct >= 1.5)
         active_risk_pct = self.greed_risk_pct if is_greed else self.base_risk_pct
 
-        target_risk_dollars = self.day_start_equity * (active_risk_pct / 100.0)
+        target_risk_dollars = effective_equity * (active_risk_pct / 100.0)
         calculated_lots = target_risk_dollars / (sl_distance * self.contract_size)
         clamped_lots = round(max(self.min_lots, min(self.max_lots, calculated_lots)), 2)
 

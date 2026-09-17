@@ -479,6 +479,11 @@ class LiveBridgeServer:
                 yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             self.cached_config = cfg
             self.last_config_load = time.time()
+
+            # Dynamic Governor Sync
+            if str_id in self.governors and float(equity) > 0:
+                self.governors[str_id].day_start_equity = float(equity)
+                self.governors[str_id].month_start_equity = float(equity)
         except Exception as e:
             logger.error(f"[Bridge] Error auto-registering account #{account_id}: {e}")
 
@@ -500,6 +505,13 @@ class LiveBridgeServer:
                     yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
                 self.cached_config = cfg
                 self.last_config_load = time.time()
+
+                # Sync governor starting equity if uninitialized
+                if str_id in self.governors and float(equity) > 0:
+                    gov = self.governors[str_id]
+                    if gov.day_start_equity == 10000.0 or gov.day_start_equity <= 0:
+                        gov.day_start_equity = float(equity)
+                        gov.month_start_equity = float(equity)
         except Exception as e:
             logger.debug(f"[Bridge] Error updating account equity: {e}")
 
@@ -529,9 +541,20 @@ class LiveBridgeServer:
         max_daily_loss = float(prof.get("max_daily_loss_pct", 1.50))
         monthly_cap = float(prof.get("monthly_loss_cap_pct", 4.50))
 
+        # Dynamic account equity discovery
+        acc_equity = float(acc_info.get("equity", 0.0))
+        if acc_equity <= 0:
+            if self.latest_tick and str(self.latest_tick.get("account_id")) == str(account_id):
+                acc_equity = float(self.latest_tick.get("equity", 10000.0))
+            else:
+                acc_equity = 10000.0
+
         gov = self.governors.get(account_id)
         if gov is None or gov.base_risk_pct != base_risk:
-            logger.info(f"🛡️ [Governor Initialized] Account {account_id} -> Profile: {prof.get('name', profile_name)} (Base Risk: {base_risk}%, Daily Loss Cap: -{max_daily_loss}%, Monthly Cap: -{monthly_cap}%)")
+            logger.info(
+                f"🛡️ [Governor Initialized] Account #{account_id} -> Profile: {prof.get('name', profile_name)} "
+                f"(Base Risk: {base_risk}%, Daily Loss Cap: -{max_daily_loss}%, Monthly Cap: -{monthly_cap}%, Dynamic Equity: ${acc_equity:.2f})"
+            )
             gov = MonthlyRatchetGovernor(
                 base_risk_pct=base_risk,
                 greed_risk_pct=greed_risk,
@@ -539,7 +562,12 @@ class LiveBridgeServer:
                 monthly_loss_cap_pct=monthly_cap,
                 cooldown_bars=10
             )
+            gov.day_start_equity = acc_equity
+            gov.month_start_equity = acc_equity
             self.governors[account_id] = gov
+        elif (gov.day_start_equity == 10000.0 or gov.day_start_equity <= 0) and acc_equity > 0:
+            gov.day_start_equity = acc_equity
+            gov.month_start_equity = acc_equity
 
         return gov
 
@@ -838,6 +866,16 @@ class LiveBridgeServer:
 
         regime_report: MarketRegimeReport = self.orchestrator.analyze_market(bar)
         self.orchestrator.risk_gatekeeper.on_new_bar(bar["timestamp"], account_equity)
+
+        # Multi-Account Governor Synchronization on Bar Close
+        accounts = self.cached_config.get("accounts", {}) if self.cached_config else {}
+        for acc_id, gov in list(self.governors.items()):
+            acc_info = accounts.get(str(acc_id), {})
+            this_acc_equity = float(acc_info.get("equity", 0.0))
+            if this_acc_equity <= 0:
+                this_acc_equity = account_equity
+            gov.on_new_bar(bar["timestamp"], this_acc_equity)
+
         self.scalper_strategy.on_bar(bar)
 
     async def _on_m15_bar_close(self, bar: Dict[str, Any], account_equity: float, open_positions: int):
@@ -860,6 +898,11 @@ class LiveBridgeServer:
         strategy_name: str = "Scalper_M1"
     ):
         if not self.latest_tick or not stop_loss or not take_profit:
+            return
+
+        # Hold Live Fire for Engine 2 (Intraday M15 / Skeptical UFO)
+        if magic == 2001 or "Intraday" in strategy_name:
+            logger.info(f"[{strategy_name} HOLD] Sinyal terdeteksi tapi order live ditahan (HOLD LIVE FIRE sesuai Strategic Plan Phase 8).")
             return
 
         # Institutional Data Integrity Gate (Interlock)
@@ -885,13 +928,19 @@ class LiveBridgeServer:
             if not writer and not self.dry_run:
                 continue
 
+            acc_info = self.cached_config.get("accounts", {}).get(str(acc_id), {}) if self.cached_config else {}
+            acc_equity = float(acc_info.get("equity", 0.0))
+            if acc_equity <= 0:
+                acc_equity = float(self.latest_tick.get("equity", 10000.0))
+
             acc_gov = self.get_governor_for_account(acc_id)
             gov_approval = acc_gov.evaluate_entry(
                 entry_price=entry_price,
                 stop_loss=stop_loss,
                 current_spread=current_spread,
-                max_spread=0.35,
-                num_open_positions=open_pos
+                max_allowed_spread=0.35,
+                num_open_positions=open_pos,
+                current_equity=acc_equity
             )
 
             if not gov_approval.approved:
@@ -901,7 +950,7 @@ class LiveBridgeServer:
             final_lots = gov_approval.lots
 
             logger.info(
-                f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic} | Acc: #{acc_id}) | "
+                f"[{strategy_name} APPROVED] {side_str} {symbol} {final_lots} lots (Magic: {magic} | Acc: #{acc_id} | Equity: ${acc_equity:.2f}) | "
                 f"Entry: {entry_price:.2f} | SL: {stop_loss:.2f} | TP: {take_profit:.2f} | Risk: ${gov_approval.risk_dollars:.2f} ({gov_approval.risk_pct}%)"
             )
 
