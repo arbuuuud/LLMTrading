@@ -86,3 +86,24 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
     2.  *Directional Neutrality* (Opposite Side Test).
     3.  *Out-of-Sample (OOS) Pipeline 70/15/15*.
 
+---
+
+### **Fase Eksplorasi 9: Grand Master Kage Bunshin — 8-Dimensional Multi-Clone Learning (2003–2026 / 7.93M Bars)**
+
+*   **Status**: **IN PROGRESS / ACTIVE PIPELINE.**
+*   **Dokumen Acuan Utama**: `docs/QUANTITATIVE_RESEARCH_CATALOG_8D.md` (SSOT Research Catalog).
+*   **Dataset Source**: `data/processed/bars/XAUUSD/M1/XAUUSD_M1_2003_2026.parquet` (7.934.247 bars M1 / 23.3 Tahun).
+*   **Tujuan**: Mengintegrasikan seluruh hasil riset historis (ATR, Time Window, Market Session, Risk Profile, HTF EMA, POI NFC/ICT, Candlestick Rejection, SMT, Stop Loss Model, Callisto BE) ke dalam satu engine pengujian paralel multi-dimensi.
+*   **8 Dimensi Kuantitatif Terpadu**:
+    1.  *Time & Session Filters*: Golden Window 10:30-14:30 vs London 08-11 vs Asia 00-06 vs Rollover Cutoff.
+    2.  *Macro Trend & Market Structure*: Sumbu VWAP Harian + H1 EMA 50/100/H4 + Parabolic Runaway Guard ($15).
+    3.  *Setups & POI*: NFC Unfilled Orders (DBR/RBD/RBR/DBD) + Equilibrium 50% + ICT OB/FVG + Fibo OTE.
+    4.  *Price Action Triggers*: Rejection Wick (≥40-50%) + Color Confirmation + Engulfing + Doji.
+    5.  *SMT Divergence*: Intermarket confirmation (XAUUSD vs Silver XAGUSD / DXY).
+    6.  *Stop Loss & Defense*: Multi-ATR (0.8x - 1.8x) vs Structure Distal SL; Bar-Close Confirmation SL vs Tick SL.
+    7.  *Profit Harvesting*: Callisto Twin 50/50 BE Ratchet vs Fixed 1:2 RR vs VWAP Mean Target.
+    8.  *Risk Governor*: Prop Firm (0.5%), Sweet Spot (0.75%), Bottoming Profit Lock (+1% s/d +3%), 2-Strike Daily Shutdown.
+*   **Target Output**:
+    - Leaderboard Juara Sejati 2003–2026 yang teruji kebal di 6 era pasar emas dunia (2008 Crash, 2013-2018 Bear/Sideways Churn, 2020 COVID, 2024-2026 Bull Run).
+
+
