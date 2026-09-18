@@ -143,4 +143,19 @@ Kami akan menggunakan pendekatan multi-fase, di mana setiap fase akan berfokus p
     4.  *LTF Precision Sniper (M3/M1)*: 4 Model Trigger (Smart Limit vs M15 Candle vs M3 Rejection Wick $\ge 45\%$ vs M3 Change of Character).
 *   **Target Uji Validasi**: Meluncurkan **216 Klon Paralel Kage Bunshin Agent 2** melintasi 16.6 Tahun data modern (2010–2026) untuk menguji efektivitas konfirmasi LTF vs Smart Limit.
 
+---
+
+### **Fase Eksplorasi 12: Matriks Konfluensi Silang & Taksonomi Balok Lego Kuantitatif (Cross-Confluence Blueprint)**
+
+*   **Status**: **CANONICAL BLUEPRINT RESMI DITETAPKAN.**
+*   **Dokumen Acuan Utama**: `docs/CROSS_CONFLUENCE_MATRIX_BLUEPRINT.md` (SSOT Matriks Konfluensi & Taksonomi Balok Lego).
+*   **Tujuan Filosofis**: Mengakhiri pencarian parameter acak / serabutan; menguji hubungan struktural sebab-akibat antar balok lego secara sistematis dengan 4 Tag Fungsional (`[ENTRY]`, `[SL]`, `[TP]`, `[RISK]`).
+*   **5 Kluster Riset Terstruktur Naruto Engine (Total 288 Klon)**:
+    1.  *Kluster 1 (72 Klon)*: NFC Base (DBR/RBD/RBR/DBD) + Fibonacci OTE (61.8%–78.6%) + Multi-RR.
+    2.  *Kluster 2 (64 Klon)*: Multi-Timeframe Structural CHoCH (H4/H1 POI $\rightarrow$ M5/M3/M1 CHoCH).
+    3.  *Kluster 3 (54 Klon)*: VWAP Extreme Band (1.3σ vs 1.5σ vs 1.8σ) + Trading Window (4h vs 10h vs 14h).
+    4.  *Kluster 4 (48 Klon)*: Stop Loss Compression ($0.30 wick buffer vs distal base vs ATR) + Breakeven Trailing.
+    5.  *Kluster 5 (50 Klon)*: Risk Scaling (0.50% s/d 2.00%) & Profit Harvesting untuk Target +20%/Bulan.
+*   **Output Target**: Menghasilkan katalog konfluensi definitif yang menjawab kombinasi timeframe dan balok lego mana yang memiliki probabilitas pantulan tertinggi dan lolos uji 500 Random Monkeys serta Walk-Forward.
+
 
